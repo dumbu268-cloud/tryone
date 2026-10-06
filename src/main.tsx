@@ -20,7 +20,10 @@ if (params.has('selftest')) {
   canvas.id = 'visual-canvas';
   canvas.style.maxWidth = '100%';
   rootEl.appendChild(canvas);
-  void import('./dev/visualtest').then(({ runVisualTest }) => runVisualTest(imageUrl, canvas));
+  const garmentId = params.get('garment') ?? undefined;
+  void import('./dev/visualtest').then(({ runVisualTest }) =>
+    runVisualTest(imageUrl, canvas, garmentId),
+  );
 } else {
   createRoot(rootEl).render(
     <StrictMode>

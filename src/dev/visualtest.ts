@@ -5,7 +5,7 @@ import { BodyPerception } from '@/core/perception/BodyPerception';
 import { ArticulatedEngine } from '@/core/engine/ArticulatedEngine';
 import { Renderer, DEFAULT_RENDER_SETTINGS } from '@/core/render/Renderer';
 import { loadGarment } from '@/core/garment/loader';
-import { DEFAULT_GARMENT } from '@/core/garment/catalog';
+import { CATALOG, DEFAULT_GARMENT } from '@/core/garment/catalog';
 
 declare global {
   interface Window {
@@ -14,7 +14,11 @@ declare global {
   }
 }
 
-export async function runVisualTest(imageUrl: string, canvas: HTMLCanvasElement): Promise<void> {
+export async function runVisualTest(
+  imageUrl: string,
+  canvas: HTMLCanvasElement,
+  garmentId?: string,
+): Promise<void> {
   try {
     const img = await loadImage(imageUrl);
     const w = img.naturalWidth;
@@ -24,7 +28,8 @@ export async function runVisualTest(imageUrl: string, canvas: HTMLCanvasElement)
     await perception.init({ segmentationStride: 1 });
 
     const engine = new ArticulatedEngine();
-    const garment = await loadGarment(DEFAULT_GARMENT);
+    const descriptor = CATALOG.find((g) => g.id === garmentId) ?? DEFAULT_GARMENT;
+    const garment = await loadGarment(descriptor);
     engine.prepare(garment);
 
     const renderer = new Renderer(canvas, { preserveDrawingBuffer: true });
