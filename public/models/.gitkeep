@@ -1,0 +1,2 @@
+# Model files are downloaded here by `npm run setup:models` (see scripts/setup-models.mjs).
+# They are intentionally not committed.
