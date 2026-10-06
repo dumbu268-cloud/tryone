@@ -5,7 +5,9 @@ import { useAppStore } from '@/state/store';
 import { Controls } from './Controls';
 import { StatsOverlay } from './StatsOverlay';
 import { StatusOverlay } from './StatusOverlay';
+import { GarmentPicker } from './GarmentPicker';
 import { DEFAULT_GARMENT } from '@/core/garment/catalog';
+import type { GarmentDescriptor } from '@/core/types';
 
 export function TryOnScreen() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -15,6 +17,7 @@ export function TryOnScreen() {
   const setError = useAppStore((s) => s.setError);
   const setMetrics = useAppStore((s) => s.setMetrics);
   const setSettings = useAppStore((s) => s.setSettings);
+  const setGarmentId = useAppStore((s) => s.setGarmentId);
 
   function ensureMirror(): LiveMirror | null {
     if (mirrorRef.current) return mirrorRef.current;
@@ -52,6 +55,11 @@ export function TryOnScreen() {
     mirrorRef.current?.setRenderSettings({ [key]: value });
   };
 
+  const handleSelectGarment = (g: GarmentDescriptor) => {
+    setGarmentId(g.id);
+    void ensureMirror()?.setGarment(g);
+  };
+
   useEffect(() => {
     return () => {
       mirrorRef.current?.dispose();
@@ -76,12 +84,14 @@ export function TryOnScreen() {
         <StatusOverlay onStart={handleStart} />
       </div>
 
+      <GarmentPicker onSelect={handleSelectGarment} />
+
       <Controls onStart={handleStart} onStop={handleStop} onToggle={handleToggle} />
 
       <p className="text-xs leading-relaxed text-white/40">
-        Stand back so your head and hips are visible. The shirt tracks your shoulders and
-        hips; toggles control occlusion (clipping to your body, hiding behind your neck,
-        and letting your arms pass in front). Debug draws the tracked landmarks.
+        Stand back so your head, hips, and arms are visible. The torso tracks your
+        shoulders and hips, and each sleeve follows your arm. Toggles control occlusion
+        and light matching; Debug draws the tracked landmarks.
       </p>
     </div>
   );

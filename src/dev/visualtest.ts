@@ -2,10 +2,10 @@
 // the garment onto it with the real WebGL renderer, so the output can be
 // screenshotted and inspected. Driven by `?visualtest=1` (see main.tsx).
 import { BodyPerception } from '@/core/perception/BodyPerception';
-import { MeshWarpEngine } from '@/core/engine/MeshWarpEngine';
+import { ArticulatedEngine } from '@/core/engine/ArticulatedEngine';
 import { Renderer, DEFAULT_RENDER_SETTINGS } from '@/core/render/Renderer';
 import { loadGarment } from '@/core/garment/loader';
-import { DEFAULT_GARMENT } from '@/core/garment/catalog';
+import { CATALOG, DEFAULT_GARMENT } from '@/core/garment/catalog';
 
 declare global {
   interface Window {
@@ -14,31 +14,49 @@ declare global {
   }
 }
 
-export async function runVisualTest(imageUrl: string, canvas: HTMLCanvasElement): Promise<void> {
+export async function runVisualTest(
+  imageUrl: string,
+  canvas: HTMLCanvasElement,
+  garmentId?: string,
+  cropFrac = 1,
+): Promise<void> {
   try {
     const img = await loadImage(imageUrl);
     const w = img.naturalWidth;
-    const h = img.naturalHeight;
+
+    // Optionally crop to the top portion to simulate seated / upper-body framing
+    // (hips out of frame).
+    let source: TexImageSource = img;
+    let sh = img.naturalHeight;
+    if (cropFrac < 1) {
+      const cc = document.createElement('canvas');
+      cc.width = w;
+      cc.height = Math.round(img.naturalHeight * cropFrac);
+      cc.getContext('2d')!.drawImage(img, 0, 0);
+      source = cc;
+      sh = cc.height;
+    }
 
     const perception = new BodyPerception();
     await perception.init({ segmentationStride: 1 });
 
-    const engine = new MeshWarpEngine();
-    const garment = await loadGarment(DEFAULT_GARMENT);
+    const engine = new ArticulatedEngine();
+    const descriptor = CATALOG.find((g) => g.id === garmentId) ?? DEFAULT_GARMENT;
+    const garment = await loadGarment(descriptor);
     engine.prepare(garment);
 
     const renderer = new Renderer(canvas, { preserveDrawingBuffer: true });
     renderer.setGarment(garment);
-    renderer.resize(w, h);
+    renderer.resize(w, sh);
 
-    let frame = perception.detectOn(img, w, h, 1000);
-    for (let i = 1; i < 4; i++) frame = perception.detectOn(img, w, h, 1000 + i * 40);
+    let frame = perception.detectOn(source, w, sh, 1000);
+    for (let i = 1; i < 4; i++) frame = perception.detectOn(source, w, sh, 1000 + i * 40);
 
     let fit = engine.fit(frame);
     for (let i = 1; i < 45; i++) fit = engine.fit(frame);
 
     renderer.render({
-      source: img,
+      source,
       sourceReady: true,
       fit,
       frame,

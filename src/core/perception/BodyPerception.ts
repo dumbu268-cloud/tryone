@@ -5,7 +5,7 @@ import {
 } from '@mediapipe/tasks-vision';
 import type { Landmark, PoseFrame, SegmentationMask, Vec2 } from '@/core/types';
 import { Vec3Filter, type OneEuroOptions } from '@/core/math/oneEuro';
-import { POSE_LANDMARK_COUNT, PoseLandmark, TORSO_LANDMARKS } from './landmarks';
+import { POSE_LANDMARK_COUNT, PoseLandmark } from './landmarks';
 
 export type Delegate = 'GPU' | 'CPU';
 
@@ -217,9 +217,12 @@ export class BodyPerception {
   }
 
   private torsoConfidence(lm: { visibility?: number }[]): number {
-    let sum = 0;
-    for (const idx of TORSO_LANDMARKS) sum += lm[idx]?.visibility ?? 0;
-    return sum / TORSO_LANDMARKS.length;
+    // Shoulders are what the torso fit truly needs; hips are optional (the engine
+    // synthesizes a torso when the lower body is out of frame). Basing validity on
+    // shoulders keeps seated / upper-body-only framing working.
+    const ls = lm[PoseLandmark.LEFT_SHOULDER]?.visibility ?? 0;
+    const rs = lm[PoseLandmark.RIGHT_SHOULDER]?.visibility ?? 0;
+    return (ls + rs) / 2;
   }
 
   private emptyFrame(ts: number, width: number, height: number): PoseFrame {

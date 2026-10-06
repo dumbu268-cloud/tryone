@@ -2,18 +2,19 @@ import { describe, it, expect } from 'vitest';
 import { MeshWarpEngine } from './MeshWarpEngine';
 import { project } from '@/core/math/homography';
 import { PoseLandmark } from '@/core/perception/landmarks';
-import { BUNDLED_TEE } from '@/core/garment/catalog';
+import { TEE } from '@/core/garment/catalog';
 import type { GarmentAsset, PoseFrame, Vec2 } from '@/core/types';
 
 const garment: GarmentAsset = {
-  id: BUNDLED_TEE.id,
-  name: BUNDLED_TEE.name,
-  type: BUNDLED_TEE.type,
-  textureWidth: BUNDLED_TEE.textureWidth,
-  textureHeight: BUNDLED_TEE.textureHeight,
+  id: TEE.id,
+  name: TEE.name,
+  type: TEE.type,
+  textureWidth: TEE.textureWidth,
+  textureHeight: TEE.textureHeight,
   image: {} as unknown as TexImageSource, // engine never touches pixels
-  anchors: BUNDLED_TEE.anchors,
-  zOrder: BUNDLED_TEE.zOrder,
+  anchors: TEE.anchors,
+  layout: TEE.layout,
+  zOrder: TEE.zOrder,
 };
 
 function makeFrame(opts: {
@@ -84,7 +85,7 @@ describe('MeshWarpEngine v0', () => {
     const e = new MeshWarpEngine();
     e.prepare(garment);
     const fit = settle(e, upright());
-    const neck = project(fit.homography, BUNDLED_TEE.anchors.neck);
+    const neck = project(fit.homography!, TEE.anchors.neck);
     expect(neck.y).toBeLessThan(300); // above shoulders (y=300)
     expect(Math.abs(neck.x - 500)).toBeLessThan(10); // near the midline
   });

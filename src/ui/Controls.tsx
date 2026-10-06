@@ -52,6 +52,12 @@ export function Controls({ onStart, onStop, onToggle }: ControlsProps) {
           onChange={(v) => onToggle('occludeForearms', v)}
         />
         <Toggle
+          label="Light"
+          checked={settings.harmonize}
+          disabled={!running}
+          onChange={(v) => onToggle('harmonize', v)}
+        />
+        <Toggle
           label="Debug"
           checked={settings.debug}
           disabled={!running}
