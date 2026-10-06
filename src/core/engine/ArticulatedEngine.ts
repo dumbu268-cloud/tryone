@@ -138,23 +138,46 @@ export class ArticulatedEngine implements TryOnEngine {
       ? { shoulderIdx: 12, elbowIdx: 14, wristIdx: 16 }
       : { shoulderIdx: 11, elbowIdx: 13, wristIdx: 15 };
 
-    const leftHip = h23.x <= h24.x ? h23 : h24;
-    const rightHip = h23.x <= h24.x ? h24 : h23;
-
     const shoulderMid = v.mid(leftShoulder, rightShoulder);
-    const hipMid = v.mid(leftHip, rightHip);
+    const shoulderWidth = v.dist(leftShoulder, rightShoulder);
+    if (shoulderWidth < this.opts.minTorsoPx) return null;
+
+    let shoulderAxis = v.normalize(v.sub(rightShoulder, leftShoulder));
+    if (v.len(shoulderAxis) < 0.5) shoulderAxis = { x: 1, y: 0 };
+    // Downward spine direction: perpendicular to the shoulder line, pointing to +y.
+    let down = v.perp(shoulderAxis);
+    if (down.y < 0) down = v.scale(down, -1);
+
+    // Hips: trust measured landmarks only when confidently visible; otherwise
+    // synthesize a body-proportioned torso from the shoulders. This fixes seated /
+    // cropped framing (hips out of frame), where MediaPipe's hip guesses would
+    // otherwise collapse the shirt into a small bib on the upper chest.
+    const hipVis = Math.min(
+      frame.normalized[PoseLandmark.LEFT_HIP]?.visibility ?? 0,
+      frame.normalized[PoseLandmark.RIGHT_HIP]?.visibility ?? 0,
+    );
+    const hb = smooth01(0.35, 0.6, hipVis);
+
+    const measLeftHip = h23.x <= h24.x ? h23 : h24;
+    const measRightHip = h23.x <= h24.x ? h24 : h23;
+    const measHipMid = v.mid(measLeftHip, measRightHip);
+    const measHipWidth = v.dist(measLeftHip, measRightHip);
+    let measHipAxis = v.normalize(v.sub(measRightHip, measLeftHip));
+    if (v.len(measHipAxis) < 0.5) measHipAxis = shoulderAxis;
+
+    const synthLen = shoulderWidth * 1.5;
+    const synthHipMid = v.add(shoulderMid, v.scale(down, synthLen));
+    const synthHipWidth = shoulderWidth * 0.78;
+
+    const hipMid = v.lerp(synthHipMid, measHipMid, hb);
+    const hipWidth = synthHipWidth + (measHipWidth - synthHipWidth) * hb;
+    let hipAxis = v.normalize(v.lerp(shoulderAxis, measHipAxis, hb));
+    if (v.len(hipAxis) < 0.5) hipAxis = shoulderAxis;
+
     const torsoVec = v.sub(hipMid, shoulderMid);
     const torsoLen = v.len(torsoVec);
-    const shoulderWidth = v.dist(leftShoulder, rightShoulder);
-    const hipWidth = v.dist(leftHip, rightHip);
-    if (torsoLen < this.opts.minTorsoPx || shoulderWidth < this.opts.minTorsoPx) return null;
-
+    if (torsoLen < this.opts.minTorsoPx) return null;
     const torsoDir = v.normalize(torsoVec);
-    const fallbackAxis = v.perp(torsoDir);
-    let shoulderAxis = v.normalize(v.sub(rightShoulder, leftShoulder));
-    let hipAxis = v.normalize(v.sub(rightHip, leftHip));
-    if (v.len(shoulderAxis) < 0.5) shoulderAxis = fallbackAxis;
-    if (v.len(hipAxis) < 0.5) hipAxis = fallbackAxis;
 
     const halfShoulder = (shoulderWidth / 2) * this.opts.shoulderWidthFactor;
     const hemHalf = v.clamp((hipWidth / 2) * 1.1, halfShoulder * 0.82, halfShoulder * 1.05);

@@ -18,11 +18,24 @@ export async function runVisualTest(
   imageUrl: string,
   canvas: HTMLCanvasElement,
   garmentId?: string,
+  cropFrac = 1,
 ): Promise<void> {
   try {
     const img = await loadImage(imageUrl);
     const w = img.naturalWidth;
-    const h = img.naturalHeight;
+
+    // Optionally crop to the top portion to simulate seated / upper-body framing
+    // (hips out of frame).
+    let source: TexImageSource = img;
+    let sh = img.naturalHeight;
+    if (cropFrac < 1) {
+      const cc = document.createElement('canvas');
+      cc.width = w;
+      cc.height = Math.round(img.naturalHeight * cropFrac);
+      cc.getContext('2d')!.drawImage(img, 0, 0);
+      source = cc;
+      sh = cc.height;
+    }
 
     const perception = new BodyPerception();
     await perception.init({ segmentationStride: 1 });
@@ -34,16 +47,16 @@ export async function runVisualTest(
 
     const renderer = new Renderer(canvas, { preserveDrawingBuffer: true });
     renderer.setGarment(garment);
-    renderer.resize(w, h);
+    renderer.resize(w, sh);
 
-    let frame = perception.detectOn(img, w, h, 1000);
-    for (let i = 1; i < 4; i++) frame = perception.detectOn(img, w, h, 1000 + i * 40);
+    let frame = perception.detectOn(source, w, sh, 1000);
+    for (let i = 1; i < 4; i++) frame = perception.detectOn(source, w, sh, 1000 + i * 40);
 
     let fit = engine.fit(frame);
     for (let i = 1; i < 45; i++) fit = engine.fit(frame);
 
     renderer.render({
-      source: img,
+      source,
       sourceReady: true,
       fit,
       frame,

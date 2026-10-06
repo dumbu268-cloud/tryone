@@ -139,6 +139,24 @@ describe('ArticulatedEngine', () => {
     expect(c.y).toBeGreaterThan(300);
   });
 
+  it('synthesizes a full torso when the hips are not visible (seated/cropped framing)', () => {
+    const e = new ArticulatedEngine();
+    e.prepare(garment);
+
+    // Hips hidden; their image coords are a bad high guess near the chest.
+    const cropped = e.fit(
+      makeFrame(
+        { [PoseLandmark.LEFT_HIP]: [470, 360], [PoseLandmark.RIGHT_HIP]: [530, 360] },
+        [PoseLandmark.LEFT_HIP, PoseLandmark.RIGHT_HIP],
+      ),
+    );
+    // Shoulders at y=300, width 200 => synthesized torso extends well below the chest,
+    // not collapsing onto the bad hip guess at y=360.
+    expect(cropped.quad.bl.y).toBeGreaterThan(600);
+    // Torso stays a sensible width (near the shoulder span), not a narrow bib.
+    expect(cropped.quad.tr.x - cropped.quad.tl.x).toBeGreaterThan(180);
+  });
+
   it('fades out and hides when tracking is lost', () => {
     const e = new ArticulatedEngine();
     e.prepare(garment);
