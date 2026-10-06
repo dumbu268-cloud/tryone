@@ -190,6 +190,16 @@ export class ArticulatedEngine implements TryOnEngine {
     let torsoLen = v.len(torsoVec);
     let torsoDir = torsoLen > 1 ? v.normalize(torsoVec) : down;
 
+    // Guard against an inverted torso: if the hips end up at/above the shoulders
+    // (odd/tilted/reclining pose or bad landmarks), the shirt would render upside
+    // down (collar at the bottom). Force a downward, body-proportioned torso.
+    if (v.dot(torsoVec, down) <= 0) {
+      hipMid = synthHipMid;
+      torsoVec = v.sub(hipMid, shoulderMid);
+      torsoLen = v.len(torsoVec);
+      torsoDir = torsoLen > 1 ? v.normalize(torsoVec) : down;
+    }
+
     // A torso is at least ~1.5x shoulder-width tall. If measured hips land too
     // high (close/seated framing, or a cropped lower body), extend to a realistic
     // length so the shirt covers the torso instead of bunching up on the chest.

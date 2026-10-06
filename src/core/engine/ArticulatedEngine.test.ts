@@ -172,6 +172,21 @@ describe('ArticulatedEngine', () => {
     expect(fit.quad.tr.x - fit.quad.tl.x).toBeGreaterThan(180);
   });
 
+  it('never renders upside down when hips are detected above the shoulders', () => {
+    const e = new ArticulatedEngine();
+    e.prepare(garment);
+    // Reclining/tilted pose: hips (y=200) above shoulders (y=300).
+    const fit = e.fit(
+      makeFrame({
+        [PoseLandmark.LEFT_HIP]: [470, 200],
+        [PoseLandmark.RIGHT_HIP]: [530, 200],
+      }),
+    );
+    // Top edge must stay above the hem (not flipped).
+    expect(fit.quad.tl.y).toBeLessThan(fit.quad.bl.y);
+    expect(fit.quad.tr.y).toBeLessThan(fit.quad.br.y);
+  });
+
   it('fades a sleeve out when its arm is not tracked (no stuck blob)', () => {
     const e = new ArticulatedEngine();
     e.prepare(garment);
