@@ -4,19 +4,23 @@ A web-based AI virtual try-on **Live Mirror**: turn on your camera and see a clo
 design rendered onto your body in real time. The goal is a *convincing visual*, not
 physical fit simulation.
 
-> **Status: Phase 1 — Live Mirror Foundation.**
-> Pipeline: `Camera → Body Perception → PoseFrame → Garment Fitting → Real-time Rendering`.
+> **Status: Phase 2 — Convincing / Articulated Try-On.**
+> Pipeline: `Camera → Body Perception → PoseFrame → Articulated Fitting → Real-time Rendering`.
 > See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and roadmap.
 
-## What Phase 1 does
+## What it does
 
 - Opens the front camera with a mirrored preview.
 - Perceives the body in real time (MediaPipe pose landmarks + multiclass segmentation).
 - Builds a smoothed `PoseFrame` (jitter reduced with a One-Euro filter).
-- Fits **one bundled t-shirt** to the torso with a homography-based mesh warp — it
-  follows movement, scale/distance, and torso tilt/rotation (not a static sticker).
-- Composites everything on a WebGL2 canvas with basic occlusion (hair/neck + forearms
-  drawn back over the garment).
+- Fits a garment with an **articulated, deformable mesh**:
+  - the **torso** warps with your shoulders and hips (distance, tilt, twist, yaw);
+  - each **sleeve follows your shoulder → elbow → wrist**, pinned at the armhole and
+    tapering to the cuff, so it bends like worn fabric (not a rigid graphic);
+  - untracked arms fall back to a stable hanging pose.
+- Composites on a WebGL2 canvas with occlusion (clip to body, hide behind neck/hair,
+  depth-ordered sleeves, bare-forearm repaint) and mild light harmonization.
+- Ships two garments (**long-sleeve shirt**, **crew tee**) with a picker.
 - Shows live FPS / inference / render-latency stats.
 
 ## Requirements
