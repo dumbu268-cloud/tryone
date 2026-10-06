@@ -25,6 +25,17 @@ if (params.has('selftest')) {
   void import('./dev/visualtest').then(({ runVisualTest }) =>
     runVisualTest(imageUrl, canvas, garmentId, cropFrac),
   );
+} else if (params.has('preptest')) {
+  // Dev/e2e path: auto-prepare a garment image, then wear it on a person image.
+  const garmentUrl = params.get('garment') ?? '/garments/samples/sample-longsleeve.svg';
+  const personUrl = params.get('img') ?? '/test/person.jpg';
+  const canvas = document.createElement('canvas');
+  canvas.id = 'visual-canvas';
+  canvas.style.maxWidth = '100%';
+  rootEl.appendChild(canvas);
+  void import('./dev/preptest').then(({ runPrepTest }) =>
+    runPrepTest(garmentUrl, personUrl, canvas),
+  );
 } else {
   createRoot(rootEl).render(
     <StrictMode>

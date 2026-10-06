@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="340" viewBox="0 0 300 340">
+  <!-- Plain studio background (what the preparer must remove) -->
+  <rect x="0" y="0" width="300" height="340" fill="#e9e9ea" />
+  <!-- Short-sleeve tee, flat lay -->
+  <polygon points="100,70 60,84 66,150 100,146" fill="#b23b32" />
+  <polygon points="200,70 240,84 234,150 200,146" fill="#b23b32" />
+  <path d="M100,70 L130,70 Q150,92 170,70 L200,70 L200,300 Q150,312 100,300 Z" fill="#c0392b" />
+  <path d="M130,70 Q150,92 170,70" fill="none" stroke="#8e2b24" stroke-width="6" stroke-linecap="round" />
+</svg>

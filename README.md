@@ -4,9 +4,15 @@ A web-based AI virtual try-on **Live Mirror**: turn on your camera and see a clo
 design rendered onto your body in real time. The goal is a *convincing visual*, not
 physical fit simulation.
 
-> **Status: Phase 2 — Convincing / Articulated Try-On.**
-> Pipeline: `Camera → Body Perception → PoseFrame → Articulated Fitting → Real-time Rendering`.
+> **Status: Phase 3 — Automatic Garment Preparation.**
+> Pipeline: `Camera → Body Perception → PoseFrame → Articulated Fitting → Real-time Rendering`,
+> plus `Clothing image → background removal → silhouette analysis → GarmentAsset`.
 > See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and roadmap.
+
+**New in Phase 3:** upload a flat-lay clothing image (or pick an auto-prepared sample) and
+a deterministic, client-side pipeline isolates the garment, detects the torso + sleeves +
+sleeve length, and produces a `GarmentAsset` that drops straight into the articulated
+engine — no manual authoring.
 
 ## What it does
 

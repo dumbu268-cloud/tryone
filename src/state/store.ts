@@ -16,12 +16,22 @@ interface AppState {
   metrics: MetricsSnapshot | null;
   settings: RenderSettings;
   garmentId: string;
+  prepInfo: PrepInfo | null;
 
   setStatus: (status: MirrorStatus, detail?: string) => void;
   setError: (error: AppError | null) => void;
   setMetrics: (metrics: MetricsSnapshot) => void;
   setSettings: (partial: Partial<RenderSettings>) => void;
   setGarmentId: (id: string) => void;
+  setPrepInfo: (info: PrepInfo | null) => void;
+}
+
+export interface PrepInfo {
+  name: string;
+  detectedType: string;
+  sleeveLength: string;
+  supported: boolean;
+  reason?: string;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -31,6 +41,7 @@ export const useAppStore = create<AppState>((set) => ({
   metrics: null,
   settings: { ...DEFAULT_RENDER_SETTINGS },
   garmentId: DEFAULT_GARMENT.id,
+  prepInfo: null,
 
   setStatus: (status, detail) =>
     set({ status, statusDetail: detail ?? null, ...(status !== 'error' ? { error: null } : {}) }),
@@ -38,4 +49,5 @@ export const useAppStore = create<AppState>((set) => ({
   setMetrics: (metrics) => set({ metrics }),
   setSettings: (partial) => set((s) => ({ settings: { ...s.settings, ...partial } })),
   setGarmentId: (id) => set({ garmentId: id }),
+  setPrepInfo: (info) => set({ prepInfo: info }),
 }));

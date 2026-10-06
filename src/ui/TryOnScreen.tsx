@@ -6,18 +6,21 @@ import { Controls } from './Controls';
 import { StatsOverlay } from './StatsOverlay';
 import { StatusOverlay } from './StatusOverlay';
 import { GarmentPicker } from './GarmentPicker';
-import { DEFAULT_GARMENT } from '@/core/garment/catalog';
-import type { GarmentDescriptor } from '@/core/types';
+import { DEFAULT_GARMENT, type SampleImage } from '@/core/garment/catalog';
+import { ClassicGarmentPreparer } from '@/core/garment/prep/prepare';
+import type { GarmentDescriptor, GarmentPrepResult } from '@/core/types';
 
 export function TryOnScreen() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mirrorRef = useRef<LiveMirror | null>(null);
+  const preparerRef = useRef<ClassicGarmentPreparer | null>(null);
 
   const setStatus = useAppStore((s) => s.setStatus);
   const setError = useAppStore((s) => s.setError);
   const setMetrics = useAppStore((s) => s.setMetrics);
   const setSettings = useAppStore((s) => s.setSettings);
   const setGarmentId = useAppStore((s) => s.setGarmentId);
+  const setPrepInfo = useAppStore((s) => s.setPrepInfo);
 
   function ensureMirror(): LiveMirror | null {
     if (mirrorRef.current) return mirrorRef.current;
@@ -55,9 +58,48 @@ export function TryOnScreen() {
     mirrorRef.current?.setRenderSettings({ [key]: value });
   };
 
-  const handleSelectGarment = (g: GarmentDescriptor) => {
+  const handleBuiltin = (g: GarmentDescriptor) => {
     setGarmentId(g.id);
+    setPrepInfo(null);
     void ensureMirror()?.setGarment(g);
+  };
+
+  function preparer(): ClassicGarmentPreparer {
+    if (!preparerRef.current) preparerRef.current = new ClassicGarmentPreparer();
+    return preparerRef.current;
+  }
+
+  async function wearPrepared(result: GarmentPrepResult, sourceName: string, id: string) {
+    const d = result.diagnostics;
+    setGarmentId(id);
+    setPrepInfo({
+      name: sourceName,
+      detectedType: d.detectedType,
+      sleeveLength: d.sleeveLength,
+      supported: d.supported,
+      ...(d.reason ? { reason: d.reason } : {}),
+    });
+    ensureMirror()?.setGarmentAsset(result.asset);
+  }
+
+  const handleSample = (s: SampleImage) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      void preparer()
+        .prepare(img)
+        .then((res) => wearPrepared(res, s.name, s.id))
+        .catch((err) => setError({ message: `Garment prep failed: ${String(err)}` }));
+    };
+    img.onerror = () => setError({ message: `Could not load ${s.url}` });
+    img.src = s.url;
+  };
+
+  const handleUpload = (file: File) => {
+    void createImageBitmap(file)
+      .then((bmp) => preparer().prepare(bmp))
+      .then((res) => wearPrepared(res, file.name, 'uploaded'))
+      .catch((err) => setError({ message: `Garment prep failed: ${String(err)}` }));
   };
 
   useEffect(() => {
@@ -84,14 +126,15 @@ export function TryOnScreen() {
         <StatusOverlay onStart={handleStart} />
       </div>
 
-      <GarmentPicker onSelect={handleSelectGarment} />
+      <GarmentPicker onBuiltin={handleBuiltin} onSample={handleSample} onUpload={handleUpload} />
 
       <Controls onStart={handleStart} onStop={handleStop} onToggle={handleToggle} />
 
       <p className="text-xs leading-relaxed text-white/40">
-        Stand back so your head, hips, and arms are visible. The torso tracks your
-        shoulders and hips, and each sleeve follows your arm. Toggles control occlusion
-        and light matching; Debug draws the tracked landmarks.
+        Stand back so your head, shoulders, and arms are visible — each sleeve follows
+        your arm. Pick a built-in garment, try an auto-prepared sample, or{' '}
+        <span className="text-white/60">upload a flat-lay clothing image</span> on a plain
+        background and the pipeline will cut it out and fit it to you.
       </p>
     </div>
   );

@@ -188,3 +188,45 @@ export interface TryOnEngine {
   fit(frame: PoseFrame): FitResult;
   dispose(): void;
 }
+
+// --- Phase 3: automatic garment preparation -------------------------------
+
+/** Plain pixel buffer (RGBA), DOM-free so the analysis is unit-testable. */
+export interface RgbaImage {
+  data: Uint8ClampedArray | Uint8Array;
+  width: number;
+  height: number;
+}
+
+export interface BBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** What the preparer understood about the input image. */
+export interface GarmentPrepDiagnostics {
+  /** Whether a usable top-like garment was detected and prepared. */
+  supported: boolean;
+  reason?: string;
+  detectedType: GarmentType;
+  sleeveLength: 'short' | 'long' | 'none';
+  bbox: BBox;
+  /** Fraction of pixels kept as garment after background removal (0..1). */
+  foregroundRatio: number;
+}
+
+export interface GarmentPrepResult {
+  asset: GarmentAsset;
+  diagnostics: GarmentPrepDiagnostics;
+}
+
+/**
+ * Turns an ordinary clothing image into a wearable {@link GarmentAsset}
+ * compatible with the articulated engine. The swap seam for garment acquisition
+ * (classical CV now; an ML segmenter could implement the same interface later).
+ */
+export interface GarmentPreparer {
+  prepare(source: CanvasImageSource): Promise<GarmentPrepResult>;
+}
