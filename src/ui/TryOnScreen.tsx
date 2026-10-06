@@ -6,14 +6,18 @@ import { Controls } from './Controls';
 import { StatsOverlay } from './StatsOverlay';
 import { StatusOverlay } from './StatusOverlay';
 import { GarmentPicker } from './GarmentPicker';
+import { UrlGarmentInput, type ResolveStage, type UrlResolveOutcome } from './UrlGarmentInput';
 import { DEFAULT_GARMENT, type SampleImage } from '@/core/garment/catalog';
 import { ClassicGarmentPreparer } from '@/core/garment/prep/prepare';
+import { HttpProductResolver } from '@/core/product/HttpProductResolver';
+import { proxiedImageUrl } from '@/core/product/ProductResolver';
 import type { GarmentDescriptor, GarmentPrepResult } from '@/core/types';
 
 export function TryOnScreen() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mirrorRef = useRef<LiveMirror | null>(null);
   const preparerRef = useRef<ClassicGarmentPreparer | null>(null);
+  const resolverRef = useRef<HttpProductResolver | null>(null);
 
   const setStatus = useAppStore((s) => s.setStatus);
   const setError = useAppStore((s) => s.setError);
@@ -102,6 +106,61 @@ export function TryOnScreen() {
       .catch((err) => setError({ message: `Garment prep failed: ${String(err)}` }));
   };
 
+  function resolver(): HttpProductResolver {
+    if (!resolverRef.current) resolverRef.current = new HttpProductResolver();
+    return resolverRef.current;
+  }
+
+  async function handleResolveUrl(
+    url: string,
+    onStage: (s: ResolveStage) => void,
+  ): Promise<UrlResolveOutcome> {
+    onStage('resolving');
+    const resolution = await resolver().resolve(url);
+    if (!resolution.ok || resolution.candidates.length === 0) {
+      return { ok: false, reason: resolution.reason ?? 'No usable image found.' };
+    }
+
+    // Try the top candidates until one prepares as a supported garment.
+    onStage('downloading');
+    const tryN = Math.min(3, resolution.candidates.length);
+    let best: GarmentPrepResult | null = null;
+    let bestPreview = '';
+    for (let i = 0; i < tryN; i++) {
+      const candidate = resolution.candidates[i]!;
+      const proxied = proxiedImageUrl(candidate.url);
+      let img: HTMLImageElement;
+      try {
+        img = await loadImageEl(proxied);
+      } catch {
+        continue;
+      }
+      onStage('preparing');
+      let prep: GarmentPrepResult;
+      try {
+        prep = await preparer().prepare(img);
+      } catch {
+        continue;
+      }
+      best = prep;
+      bestPreview = proxied;
+      if (prep.diagnostics.supported) break;
+    }
+
+    if (!best) {
+      return { ok: false, reason: 'Could not load a usable image from that URL.' };
+    }
+
+    wearPrepared(best, resolution.title ?? url, 'url');
+    return {
+      ok: true,
+      previewUrl: bestPreview,
+      detectedType: best.diagnostics.detectedType,
+      sleeveLength: best.diagnostics.sleeveLength,
+      ...(best.diagnostics.reason ? { reason: best.diagnostics.reason } : {}),
+    };
+  }
+
   useEffect(() => {
     return () => {
       mirrorRef.current?.dispose();
@@ -126,16 +185,28 @@ export function TryOnScreen() {
         <StatusOverlay onStart={handleStart} />
       </div>
 
+      <UrlGarmentInput onSubmit={handleResolveUrl} onUpload={handleUpload} />
+
       <GarmentPicker onBuiltin={handleBuiltin} onSample={handleSample} onUpload={handleUpload} />
 
       <Controls onStart={handleStart} onStop={handleStop} onToggle={handleToggle} />
 
       <p className="text-xs leading-relaxed text-white/40">
         Stand back so your head, shoulders, and arms are visible — each sleeve follows
-        your arm. Pick a built-in garment, try an auto-prepared sample, or{' '}
+        your arm. Paste a product/image URL, pick a built-in or auto-prepared sample, or{' '}
         <span className="text-white/60">upload a flat-lay clothing image</span> on a plain
         background and the pipeline will cut it out and fit it to you.
       </p>
     </div>
   );
+}
+
+function loadImageEl(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Failed to load ${src}`));
+    img.src = src;
+  });
 }
