@@ -157,6 +157,21 @@ describe('ArticulatedEngine', () => {
     expect(cropped.quad.tr.x - cropped.quad.tl.x).toBeGreaterThan(180);
   });
 
+  it('extends a too-short torso to a realistic length (close/seated framing)', () => {
+    const e = new ArticulatedEngine();
+    e.prepare(garment);
+    // Hips VISIBLE but detected high near the chest (person close to camera).
+    const fit = e.fit(
+      makeFrame({
+        [PoseLandmark.LEFT_HIP]: [470, 360],
+        [PoseLandmark.RIGHT_HIP]: [530, 360],
+      }),
+    );
+    // Shoulders span 200 at y=300 → torso clamped to ≥1.5×width, hem well below.
+    expect(fit.quad.bl.y).toBeGreaterThan(600);
+    expect(fit.quad.tr.x - fit.quad.tl.x).toBeGreaterThan(180);
+  });
+
   it('fades out and hides when tracking is lost', () => {
     const e = new ArticulatedEngine();
     e.prepare(garment);

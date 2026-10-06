@@ -169,15 +169,23 @@ export class ArticulatedEngine implements TryOnEngine {
     const synthHipMid = v.add(shoulderMid, v.scale(down, synthLen));
     const synthHipWidth = shoulderWidth * 0.78;
 
-    const hipMid = v.lerp(synthHipMid, measHipMid, hb);
+    let hipMid = v.lerp(synthHipMid, measHipMid, hb);
     const hipWidth = synthHipWidth + (measHipWidth - synthHipWidth) * hb;
     let hipAxis = v.normalize(v.lerp(shoulderAxis, measHipAxis, hb));
     if (v.len(hipAxis) < 0.5) hipAxis = shoulderAxis;
 
-    const torsoVec = v.sub(hipMid, shoulderMid);
-    const torsoLen = v.len(torsoVec);
-    if (torsoLen < this.opts.minTorsoPx) return null;
-    const torsoDir = v.normalize(torsoVec);
+    let torsoVec = v.sub(hipMid, shoulderMid);
+    let torsoLen = v.len(torsoVec);
+    let torsoDir = torsoLen > 1 ? v.normalize(torsoVec) : down;
+
+    // A torso is at least ~1.5x shoulder-width tall. If measured hips land too
+    // high (close/seated framing, or a cropped lower body), extend to a realistic
+    // length so the shirt covers the torso instead of bunching up on the chest.
+    const minLen = shoulderWidth * 1.5;
+    if (torsoLen < minLen) {
+      torsoLen = minLen;
+      hipMid = v.add(shoulderMid, v.scale(torsoDir, minLen));
+    }
 
     const halfShoulder = (shoulderWidth / 2) * this.opts.shoulderWidthFactor;
     const hemHalf = v.clamp((hipWidth / 2) * 1.1, halfShoulder * 0.82, halfShoulder * 1.05);
