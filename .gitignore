@@ -24,6 +24,8 @@ public/models/*
 public/mediapipe/
 public/test/*
 !public/test/.gitkeep
+!public/test/product.html
+!public/test/noimage.html
 
 # Playwright
 test-results

@@ -10,7 +10,7 @@ export default defineConfig({
   test: {
     // Pure-logic unit tests run in Node; no DOM needed.
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'server/**/*.test.ts'],
     globals: true,
   },
 });
