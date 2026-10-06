@@ -1,11 +1,20 @@
-import type { FitResult, GarmentAsset, PoseFrame, Quad, TryOnEngine, Vec2 } from '@/core/types';
+import type {
+  FitResult,
+  GarmentAsset,
+  GarmentLayout,
+  PoseFrame,
+  Quad,
+  TryOnEngine,
+  Vec2,
+} from '@/core/types';
 import { PoseLandmark } from '@/core/perception/landmarks';
 import { buildGarmentMesh, type GarmentMesh } from '@/core/garment/mesh';
 import * as v from '@/core/math/vec';
 
 export interface ArticulatedOptions {
+  /** Garment shoulders sit this much wider than the body shoulder landmarks. */
   shoulderWidthFactor?: number;
-  hemDropFactor?: number;
+  /** Lift the shoulder seam toward the neck, as a fraction of garment length. */
   shoulderLiftFactor?: number;
   fadeSpeed?: number;
   minTorsoPx?: number;
@@ -17,8 +26,7 @@ export interface ArticulatedOptions {
 
 const DEFAULTS: Required<ArticulatedOptions> = {
   shoulderWidthFactor: 1.12,
-  hemDropFactor: 0.32,
-  shoulderLiftFactor: 0.06,
+  shoulderLiftFactor: 0.05,
   fadeSpeed: 0.22,
   minTorsoPx: 24,
   underarmV: 0.3,
@@ -38,24 +46,34 @@ interface ArmChain {
   wristIdx: number;
 }
 
-/** A bent, tapering tube pinned at the armhole and following the arm. */
+/** Garment-intrinsic proportions, relative to its own shoulder width. */
+interface GarmentProportions {
+  hemWidthRatio: number;
+  torsoLenRatio: number;
+  leftSleeveLenRatio: number;
+  rightSleeveLenRatio: number;
+  leftSleeveTipRatio: number;
+  rightSleeveTipRatio: number;
+}
+
 interface Skeleton {
   pointAt(t: number, s: number): Vec2;
 }
 
 /**
- * ArticulatedEngine — Phase 2 deformable try-on.
+ * ArticulatedEngine — garment-proportioned deformable try-on.
  *
- * Torso: bilinear warp of a shoulder/hip quad (distance, tilt, twist, yaw).
- * Sleeves: each mapped along the shoulder→elbow→wrist chain, pinned at the
- * armhole to the torso edge (no seam gap) and tapering to the cuff. Untracked
- * arms fall back to a hanging pose so sleeves stay stable instead of flying off.
+ * The garment's own layout determines its shape (torso width/length/hem + sleeve
+ * length/width); the body only places/scales/orients/leans it. So different
+ * garments produce visibly different geometry, while the fit tracks the user.
+ * Sleeves articulate to the elbow/wrist when visible and rest in a natural hang
+ * (never vanish) when the arms aren't tracked.
  */
 export class ArticulatedEngine implements TryOnEngine {
-  readonly id = 'articulated-v1';
+  readonly id = 'articulated-v2';
   private readonly opts: Required<ArticulatedOptions>;
-  private garment: GarmentAsset | null = null;
   private mesh: GarmentMesh | null = null;
+  private prop: GarmentProportions = flatProportions();
   private positions: Float32Array = new Float32Array(0);
   private opacity = 0;
 
@@ -64,8 +82,8 @@ export class ArticulatedEngine implements TryOnEngine {
   }
 
   prepare(garment: GarmentAsset): void {
-    this.garment = garment;
     this.mesh = buildGarmentMesh(garment);
+    this.prop = computeProportions(garment.layout);
     this.positions = new Float32Array(this.mesh.vertexCount * 2);
     this.opacity = 0;
   }
@@ -82,8 +100,8 @@ export class ArticulatedEngine implements TryOnEngine {
       return { ...invisible(), opacity: this.opacity };
     }
 
-    const left = this.buildArm(frame, geo, geo.leftArm, geo.quad.tl, geo.quad.bl);
-    const right = this.buildArm(frame, geo, geo.rightArm, geo.quad.tr, geo.quad.br);
+    const left = this.buildArm(frame, geo, geo.leftArm, geo.quad.tl, geo.quad.bl, true);
+    const right = this.buildArm(frame, geo, geo.rightArm, geo.quad.tr, geo.quad.br, false);
 
     const pos = this.positions;
     const { region, paramA, paramB } = mesh;
@@ -104,8 +122,6 @@ export class ArticulatedEngine implements TryOnEngine {
 
     return {
       quad: geo.quad,
-      leftSleeveOpacity: this.sleeveOpacity(frame, geo.leftArm),
-      rightSleeveOpacity: this.sleeveOpacity(frame, geo.rightArm),
       opacity: this.opacity,
       visible: this.opacity > 0.02,
       positions: pos,
@@ -120,16 +136,6 @@ export class ArticulatedEngine implements TryOnEngine {
     return n.z > shoulderZ + 0.08;
   }
 
-  /**
-   * Fade a sleeve out when its arm isn't confidently tracked, so an untracked
-   * arm leaves no sleeve rather than a stuck "hanging" blob over the chest.
-   */
-  private sleeveOpacity(frame: PoseFrame, arm: ArmChain): number {
-    const elbow = frame.normalized[arm.elbowIdx]?.visibility ?? 0;
-    const wrist = frame.normalized[arm.wristIdx]?.visibility ?? 0;
-    return smooth01(this.opts.armVisibility - 0.2, this.opts.armVisibility + 0.1, Math.min(elbow, wrist));
-  }
-
   private torsoGeometry(frame: PoseFrame): TorsoGeometry | null {
     const lm = frame.image;
     if (!frame.valid || lm.length < 33) return null;
@@ -139,7 +145,6 @@ export class ArticulatedEngine implements TryOnEngine {
     const h23 = lm[PoseLandmark.LEFT_HIP]!;
     const h24 = lm[PoseLandmark.RIGHT_HIP]!;
 
-    // Assign by on-screen x; carry the matching arm chain for each side.
     const leftIs11 = s11.x <= s12.x;
     const leftShoulder = leftIs11 ? s11 : s12;
     const rightShoulder = leftIs11 ? s12 : s11;
@@ -151,80 +156,57 @@ export class ArticulatedEngine implements TryOnEngine {
       : { shoulderIdx: 11, elbowIdx: 13, wristIdx: 15 };
 
     const shoulderMid = v.mid(leftShoulder, rightShoulder);
-    const shoulderWidth = v.dist(leftShoulder, rightShoulder);
-    if (shoulderWidth < this.opts.minTorsoPx) return null;
+    const bodyShoulderW = v.dist(leftShoulder, rightShoulder);
+    if (bodyShoulderW < this.opts.minTorsoPx) return null;
 
     let shoulderAxis = v.normalize(v.sub(rightShoulder, leftShoulder));
     if (v.len(shoulderAxis) < 0.5) shoulderAxis = { x: 1, y: 0 };
-    // Downward spine direction: perpendicular to the shoulder line, pointing to +y.
     let down = v.perp(shoulderAxis);
     if (down.y < 0) down = v.scale(down, -1);
 
-    // Hips: trust measured landmarks only when confidently visible; otherwise
-    // synthesize a body-proportioned torso from the shoulders. This fixes seated /
-    // cropped framing (hips out of frame), where MediaPipe's hip guesses would
-    // otherwise collapse the shirt into a small bib on the upper chest.
+    // Body torso DIRECTION (lean) from shoulders→hips; its length is not used —
+    // the garment supplies the length. Synthesize/clamp only the direction.
     const hipVis = Math.min(
       frame.normalized[PoseLandmark.LEFT_HIP]?.visibility ?? 0,
       frame.normalized[PoseLandmark.RIGHT_HIP]?.visibility ?? 0,
     );
     const hb = smooth01(0.35, 0.6, hipVis);
-
     const measLeftHip = h23.x <= h24.x ? h23 : h24;
     const measRightHip = h23.x <= h24.x ? h24 : h23;
     const measHipMid = v.mid(measLeftHip, measRightHip);
-    const measHipWidth = v.dist(measLeftHip, measRightHip);
     let measHipAxis = v.normalize(v.sub(measRightHip, measLeftHip));
     if (v.len(measHipAxis) < 0.5) measHipAxis = shoulderAxis;
+    const synthHipMid = v.add(shoulderMid, v.scale(down, bodyShoulderW * 1.5));
 
-    const synthLen = shoulderWidth * 1.5;
-    const synthHipMid = v.add(shoulderMid, v.scale(down, synthLen));
-    const synthHipWidth = shoulderWidth * 0.78;
-
-    let hipMid = v.lerp(synthHipMid, measHipMid, hb);
-    const hipWidth = synthHipWidth + (measHipWidth - synthHipWidth) * hb;
+    const hipMid = v.lerp(synthHipMid, measHipMid, hb);
     let hipAxis = v.normalize(v.lerp(shoulderAxis, measHipAxis, hb));
     if (v.len(hipAxis) < 0.5) hipAxis = shoulderAxis;
 
-    let torsoVec = v.sub(hipMid, shoulderMid);
-    let torsoLen = v.len(torsoVec);
-    let torsoDir = torsoLen > 1 ? v.normalize(torsoVec) : down;
+    const torsoVec = v.sub(hipMid, shoulderMid);
+    let torsoDir = v.len(torsoVec) > 1 ? v.normalize(torsoVec) : down;
+    // Never let the garment render upside down.
+    if (v.dot(torsoDir, down) <= 0) torsoDir = down;
 
-    // Guard against an inverted torso: if the hips end up at/above the shoulders
-    // (odd/tilted/reclining pose or bad landmarks), the shirt would render upside
-    // down (collar at the bottom). Force a downward, body-proportioned torso.
-    if (v.dot(torsoVec, down) <= 0) {
-      hipMid = synthHipMid;
-      torsoVec = v.sub(hipMid, shoulderMid);
-      torsoLen = v.len(torsoVec);
-      torsoDir = torsoLen > 1 ? v.normalize(torsoVec) : down;
-    }
+    // --- Garment-proportioned quad -----------------------------------------
+    const factor = this.opts.shoulderWidthFactor;
+    const scaleUnit = bodyShoulderW * factor; // garment shoulder width -> body
+    const topHalf = scaleUnit / 2;
+    const botHalf = topHalf * this.prop.hemWidthRatio;
+    const lenScreen = this.prop.torsoLenRatio * scaleUnit;
 
-    // A torso is at least ~1.5x shoulder-width tall. If measured hips land too
-    // high (close/seated framing, or a cropped lower body), extend to a realistic
-    // length so the shirt covers the torso instead of bunching up on the chest.
-    const minLen = shoulderWidth * 1.5;
-    if (torsoLen < minLen) {
-      torsoLen = minLen;
-      hipMid = v.add(shoulderMid, v.scale(torsoDir, minLen));
-    }
-
-    const halfShoulder = (shoulderWidth / 2) * this.opts.shoulderWidthFactor;
-    const hemHalf = v.clamp((hipWidth / 2) * 1.1, halfShoulder * 0.82, halfShoulder * 1.05);
-    const lift = v.scale(torsoDir, this.opts.shoulderLiftFactor * torsoLen);
-    const top = v.sub(shoulderMid, lift);
-    const hemCenter = v.add(hipMid, v.scale(torsoDir, this.opts.hemDropFactor * torsoLen));
+    const top = v.sub(shoulderMid, v.scale(torsoDir, this.opts.shoulderLiftFactor * lenScreen));
+    const bottom = v.add(top, v.scale(torsoDir, lenScreen));
 
     const quad: Quad = {
-      tl: v.sub(top, v.scale(shoulderAxis, halfShoulder)),
-      tr: v.add(top, v.scale(shoulderAxis, halfShoulder)),
-      bl: v.sub(hemCenter, v.scale(hipAxis, hemHalf)),
-      br: v.add(hemCenter, v.scale(hipAxis, hemHalf)),
+      tl: v.sub(top, v.scale(shoulderAxis, topHalf)),
+      tr: v.add(top, v.scale(shoulderAxis, topHalf)),
+      bl: v.sub(bottom, v.scale(hipAxis, botHalf)),
+      br: v.add(bottom, v.scale(hipAxis, botHalf)),
     };
     for (const p of [quad.tl, quad.tr, quad.bl, quad.br]) {
       if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
     }
-    return { quad, torsoDir, torsoLen, leftArm, rightArm };
+    return { quad, torsoDir, torsoLen: lenScreen, scaleUnit, shoulderAxis, leftArm, rightArm };
   }
 
   private buildArm(
@@ -233,30 +215,46 @@ export class ArticulatedEngine implements TryOnEngine {
     arm: ArmChain,
     shoulderPt: Vec2,
     bottomCorner: Vec2,
+    isLeft: boolean,
   ): Skeleton {
     const underarm = v.lerp(shoulderPt, bottomCorner, this.opts.underarmV);
     const c0 = v.mid(shoulderPt, underarm);
     const rootHalf = Math.max(6, v.dist(shoulderPt, underarm) / 2);
     const rootNormal = v.normalize(v.sub(underarm, shoulderPt));
-    const isLong = this.garment?.layout.sleeveLength === 'long';
 
-    // Real arm joints, blended toward a hanging fallback when untracked.
-    const armLen = geo.torsoLen * 0.95;
-    const hangElbow = v.add(shoulderPt, v.scale(geo.torsoDir, armLen * 0.5));
-    const hangWrist = v.add(shoulderPt, v.scale(geo.torsoDir, armLen));
+    const lenRatio = isLeft ? this.prop.leftSleeveLenRatio : this.prop.rightSleeveLenRatio;
+    const tipRatio = isLeft ? this.prop.leftSleeveTipRatio : this.prop.rightSleeveTipRatio;
+    const sleeveLen = lenRatio * geo.scaleUnit;
+    if (sleeveLen < 10) {
+      // Sleeveless/tank: collapse the sleeve mesh to the armhole (renders nothing).
+      return { pointAt: () => c0 };
+    }
+    const tipHalf = v.clamp((tipRatio * geo.scaleUnit) / 2, 3, rootHalf);
+
+    // Arm direction: real joints when visible, blended toward a natural resting
+    // hang (down + slightly outward) when not — so the sleeve never vanishes.
+    const outward = isLeft ? v.scale(geo.shoulderAxis, -1) : geo.shoulderAxis;
+    const restDir = v.normalize(v.add(geo.torsoDir, v.scale(outward, 0.35)));
+    const armLen = Math.max(sleeveLen, geo.torsoLen * 0.9);
+    const restElbow = v.add(c0, v.scale(restDir, armLen * 0.5));
+    const restWrist = v.add(c0, v.scale(restDir, armLen));
+
     const elbowVis = frame.normalized[arm.elbowIdx]?.visibility ?? 0;
     const wristVis = frame.normalized[arm.wristIdx]?.visibility ?? 0;
-    const wArm = smooth01(this.opts.armVisibility - 0.2, this.opts.armVisibility + 0.1, Math.min(elbowVis, wristVis));
-    const elbow = v.lerp(hangElbow, frame.image[arm.elbowIdx] ?? hangElbow, wArm);
-    const wrist = v.lerp(hangWrist, frame.image[arm.wristIdx] ?? hangWrist, wArm);
+    const wArm = smooth01(
+      this.opts.armVisibility - 0.2,
+      this.opts.armVisibility + 0.1,
+      Math.min(elbowVis, wristVis),
+    );
+    const elbow = v.lerp(restElbow, frame.image[arm.elbowIdx] ?? restElbow, wArm);
+    const wrist = v.lerp(restWrist, frame.image[arm.wristIdx] ?? restWrist, wArm);
 
-    const knots: Vec2[] = isLong ? [c0, elbow, wrist] : [c0, v.lerp(c0, elbow, 0.55)];
-    const cuffHalf = rootHalf * (isLong ? 0.5 : 0.72);
-    return makeSkeleton(knots, rootHalf, cuffHalf, rootNormal);
+    // Sleeve covers `sleeveLen` of arc length along shoulder→elbow→wrist.
+    const knots = truncatePolyline([c0, elbow, wrist], sleeveLen, restDir);
+    return makeSkeleton(knots, rootHalf, tipHalf, rootNormal);
   }
 
   dispose(): void {
-    this.garment = null;
     this.mesh = null;
     this.positions = new Float32Array(0);
     this.opacity = 0;
@@ -267,8 +265,76 @@ interface TorsoGeometry {
   quad: Quad;
   torsoDir: Vec2;
   torsoLen: number;
+  scaleUnit: number;
+  shoulderAxis: Vec2;
   leftArm: ArmChain;
   rightArm: ArmChain;
+}
+
+function flatProportions(): GarmentProportions {
+  return {
+    hemWidthRatio: 1,
+    torsoLenRatio: 1.4,
+    leftSleeveLenRatio: 0.9,
+    rightSleeveLenRatio: 0.9,
+    leftSleeveTipRatio: 0.5,
+    rightSleeveTipRatio: 0.5,
+  };
+}
+
+function computeProportions(layout: GarmentLayout): GarmentProportions {
+  const t = layout.torso;
+  const shoulderW = Math.max(1, v.dist(t.tl, t.tr));
+  const hemW = v.dist(t.bl, t.br);
+  const torsoLen = (v.dist(t.tl, t.bl) + v.dist(t.tr, t.br)) / 2;
+
+  const sleeve = (s: GarmentLayout['leftSleeve']) => {
+    const rootMid = v.mid(s.rootTop, s.rootBottom);
+    const tipMid = v.mid(s.tipTop, s.tipBottom);
+    return {
+      lenRatio: v.dist(rootMid, tipMid) / shoulderW,
+      tipRatio: v.dist(s.tipTop, s.tipBottom) / shoulderW,
+    };
+  };
+  const l = sleeve(layout.leftSleeve);
+  const r = sleeve(layout.rightSleeve);
+
+  return {
+    hemWidthRatio: v.clamp(hemW / shoulderW, 0.55, 1.6),
+    torsoLenRatio: v.clamp(torsoLen / shoulderW, 0.8, 2.8),
+    leftSleeveLenRatio: v.clamp(l.lenRatio, 0, 1.6),
+    rightSleeveLenRatio: v.clamp(r.lenRatio, 0, 1.6),
+    leftSleeveTipRatio: v.clamp(l.tipRatio, 0, 1.2),
+    rightSleeveTipRatio: v.clamp(r.tipRatio, 0, 1.2),
+  };
+}
+
+/** Truncate (or extend) a polyline to a target arc length, returning its knots. */
+function truncatePolyline(poly: Vec2[], length: number, fallbackDir: Vec2): Vec2[] {
+  if (length <= 1 || poly.length < 2) return [poly[0]!, poly[0]!];
+  const out: Vec2[] = [poly[0]!];
+  let remaining = length;
+  for (let i = 0; i < poly.length - 1; i++) {
+    const a = poly[i]!;
+    const b = poly[i + 1]!;
+    const seg = v.dist(a, b);
+    if (seg <= remaining + 1e-3) {
+      out.push(b);
+      remaining -= seg;
+    } else {
+      out.push(v.add(a, v.scale(v.normalize(v.sub(b, a)), remaining)));
+      remaining = 0;
+      break;
+    }
+  }
+  if (remaining > 1 && out.length >= 1) {
+    const last = out[out.length - 1]!;
+    const prev = out.length >= 2 ? out[out.length - 2]! : v.sub(last, fallbackDir);
+    let dir = v.sub(last, prev);
+    dir = v.len(dir) > 1e-3 ? v.normalize(dir) : fallbackDir;
+    out[out.length - 1] = v.add(last, v.scale(dir, remaining));
+  }
+  return out;
 }
 
 function makeSkeleton(knots: Vec2[], rootHalf: number, cuffHalf: number, rootNormal: Vec2): Skeleton {
@@ -280,6 +346,10 @@ function makeSkeleton(knots: Vec2[], rootHalf: number, cuffHalf: number, rootNor
     const len = Math.max(1e-3, v.dist(a, b));
     segs.push({ a, dir: v.scale(v.sub(b, a), 1 / len), len });
     total += len;
+  }
+  if (segs.length === 0) {
+    const p = knots[0] ?? { x: 0, y: 0 };
+    return { pointAt: () => p };
   }
   return {
     pointAt(t, s) {

@@ -3,7 +3,7 @@ import { ArticulatedEngine } from './ArticulatedEngine';
 import { buildGarmentMesh } from '@/core/garment/mesh';
 import { LONG_SLEEVE } from '@/core/garment/catalog';
 import { PoseLandmark } from '@/core/perception/landmarks';
-import type { GarmentAsset, Landmark, PoseFrame, Vec2 } from '@/core/types';
+import type { GarmentAsset, GarmentLayout, Landmark, PoseFrame, Quad, Vec2 } from '@/core/types';
 
 const garment: GarmentAsset = {
   id: LONG_SLEEVE.id,
@@ -67,6 +67,37 @@ function makeFrame(positions: Lm, hidden: number[] = []): PoseFrame {
 
 function vertexPos(positions: Float32Array, idx: number): Vec2 {
   return { x: positions[idx * 2]!, y: positions[idx * 2 + 1]! };
+}
+
+function degenerateSleeve(x: number, y: number): GarmentLayout['leftSleeve'] {
+  const p = { x, y };
+  return { rootTop: p, rootBottom: p, tipTop: p, tipBottom: p };
+}
+
+function makeGarment(layout: GarmentLayout): GarmentAsset {
+  return {
+    id: 'test',
+    name: 'test',
+    type: 'tshirt',
+    textureWidth: 256,
+    textureHeight: 600,
+    image: {} as unknown as TexImageSource,
+    anchors: {
+      neck: { x: 100, y: 10 },
+      leftShoulder: layout.torso.tl,
+      rightShoulder: layout.torso.tr,
+      leftHem: layout.torso.bl,
+      rightHem: layout.torso.br,
+    },
+    layout,
+    zOrder: 10,
+  };
+}
+
+function settleQuad(engine: ArticulatedEngine, frame: PoseFrame): Quad {
+  let fit = engine.fit(frame);
+  for (let i = 0; i < 40; i++) fit = engine.fit(frame);
+  return fit.quad;
 }
 
 describe('ArticulatedEngine', () => {
@@ -187,14 +218,53 @@ describe('ArticulatedEngine', () => {
     expect(fit.quad.tr.y).toBeLessThan(fit.quad.br.y);
   });
 
-  it('fades a sleeve out when its arm is not tracked (no stuck blob)', () => {
+  it('keeps a stable resting sleeve (no vanish) when the arm is untracked', () => {
     const e = new ArticulatedEngine();
     e.prepare(garment);
-    const fit = e.fit(
-      makeFrame({}, [PoseLandmark.LEFT_ELBOW, PoseLandmark.LEFT_WRIST]),
-    );
-    expect(fit.leftSleeveOpacity ?? 1).toBeLessThan(0.1);
-    expect(fit.rightSleeveOpacity ?? 0).toBeGreaterThan(0.9);
+    const cuff = leftCuffCentreVertex();
+    const fit = e.fit(makeFrame({}, [PoseLandmark.LEFT_ELBOW, PoseLandmark.LEFT_WRIST]));
+    // Garment stays fully visible; the sleeve rests downward beside the torso
+    // (not faded away, not driven to bogus coordinates).
+    expect(fit.visible).toBe(true);
+    const c = vertexPos(fit.positions!, cuff);
+    expect(Number.isFinite(c.x) && Number.isFinite(c.y)).toBe(true);
+    expect(c.y).toBeGreaterThan(300); // hangs below the shoulders
+    expect(c.x).toBeLessThan(1000);
+  });
+
+  it('produces visibly different geometry for garments with different proportions', () => {
+    // A short, wide garment vs a long, narrow one — same body frame.
+    const shortWide = makeGarment({
+      torso: { tl: { x: 0, y: 0 }, tr: { x: 200, y: 0 }, br: { x: 220, y: 160 }, bl: { x: -20, y: 160 } },
+      leftSleeve: degenerateSleeve(0, 0),
+      rightSleeve: degenerateSleeve(200, 0),
+      sleeveLength: 'short',
+      coversForearm: false,
+    });
+    const longNarrow = makeGarment({
+      torso: { tl: { x: 0, y: 0 }, tr: { x: 200, y: 0 }, br: { x: 180, y: 520 }, bl: { x: 20, y: 520 } },
+      leftSleeve: degenerateSleeve(0, 0),
+      rightSleeve: degenerateSleeve(200, 0),
+      sleeveLength: 'short',
+      coversForearm: false,
+    });
+
+    const frame = makeFrame({});
+    const a = new ArticulatedEngine();
+    a.prepare(shortWide);
+    const qa = settleQuad(a, frame);
+    const b = new ArticulatedEngine();
+    b.prepare(longNarrow);
+    const qb = settleQuad(b, frame);
+
+    const lenA = qa.bl.y - qa.tl.y;
+    const lenB = qb.bl.y - qb.tl.y;
+    const hemA = qa.br.x - qa.bl.x;
+    const hemB = qb.br.x - qb.bl.x;
+
+    // The long-narrow garment is substantially taller; the short-wide one has a wider hem.
+    expect(lenB).toBeGreaterThan(lenA * 1.8);
+    expect(hemA).toBeGreaterThan(hemB * 1.3);
   });
 
   it('fades out and hides when tracking is lost', () => {
