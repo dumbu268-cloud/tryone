@@ -104,6 +104,8 @@ export class ArticulatedEngine implements TryOnEngine {
 
     return {
       quad: geo.quad,
+      leftSleeveOpacity: this.sleeveOpacity(frame, geo.leftArm),
+      rightSleeveOpacity: this.sleeveOpacity(frame, geo.rightArm),
       opacity: this.opacity,
       visible: this.opacity > 0.02,
       positions: pos,
@@ -116,6 +118,16 @@ export class ArticulatedEngine implements TryOnEngine {
     const n = frame.normalized[wristIdx];
     if (!n) return false;
     return n.z > shoulderZ + 0.08;
+  }
+
+  /**
+   * Fade a sleeve out when its arm isn't confidently tracked, so an untracked
+   * arm leaves no sleeve rather than a stuck "hanging" blob over the chest.
+   */
+  private sleeveOpacity(frame: PoseFrame, arm: ArmChain): number {
+    const elbow = frame.normalized[arm.elbowIdx]?.visibility ?? 0;
+    const wrist = frame.normalized[arm.wristIdx]?.visibility ?? 0;
+    return smooth01(this.opts.armVisibility - 0.2, this.opts.armVisibility + 0.1, Math.min(elbow, wrist));
   }
 
   private torsoGeometry(frame: PoseFrame): TorsoGeometry | null {

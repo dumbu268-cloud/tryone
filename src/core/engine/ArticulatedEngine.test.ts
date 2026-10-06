@@ -172,6 +172,16 @@ describe('ArticulatedEngine', () => {
     expect(fit.quad.tr.x - fit.quad.tl.x).toBeGreaterThan(180);
   });
 
+  it('fades a sleeve out when its arm is not tracked (no stuck blob)', () => {
+    const e = new ArticulatedEngine();
+    e.prepare(garment);
+    const fit = e.fit(
+      makeFrame({}, [PoseLandmark.LEFT_ELBOW, PoseLandmark.LEFT_WRIST]),
+    );
+    expect(fit.leftSleeveOpacity ?? 1).toBeLessThan(0.1);
+    expect(fit.rightSleeveOpacity ?? 0).toBeGreaterThan(0.9);
+  });
+
   it('fades out and hides when tracking is lost', () => {
     const e = new ArticulatedEngine();
     e.prepare(garment);

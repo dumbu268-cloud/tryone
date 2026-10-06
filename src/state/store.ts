@@ -17,6 +17,7 @@ interface AppState {
   settings: RenderSettings;
   garmentId: string;
   prepInfo: PrepInfo | null;
+  hint: string | null;
 
   setStatus: (status: MirrorStatus, detail?: string) => void;
   setError: (error: AppError | null) => void;
@@ -24,6 +25,7 @@ interface AppState {
   setSettings: (partial: Partial<RenderSettings>) => void;
   setGarmentId: (id: string) => void;
   setPrepInfo: (info: PrepInfo | null) => void;
+  setHint: (hint: string | null) => void;
 }
 
 export interface PrepInfo {
@@ -42,6 +44,7 @@ export const useAppStore = create<AppState>((set) => ({
   settings: { ...DEFAULT_RENDER_SETTINGS },
   garmentId: DEFAULT_GARMENT.id,
   prepInfo: null,
+  hint: null,
 
   setStatus: (status, detail) =>
     set({ status, statusDetail: detail ?? null, ...(status !== 'error' ? { error: null } : {}) }),
@@ -50,4 +53,5 @@ export const useAppStore = create<AppState>((set) => ({
   setSettings: (partial) => set((s) => ({ settings: { ...s.settings, ...partial } })),
   setGarmentId: (id) => set({ garmentId: id }),
   setPrepInfo: (info) => set({ prepInfo: info }),
+  setHint: (hint) => set({ hint }),
 }));

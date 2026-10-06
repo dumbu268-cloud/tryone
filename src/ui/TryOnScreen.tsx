@@ -5,6 +5,7 @@ import { useAppStore } from '@/state/store';
 import { Controls } from './Controls';
 import { StatsOverlay } from './StatsOverlay';
 import { StatusOverlay } from './StatusOverlay';
+import { HintOverlay } from './HintOverlay';
 import { GarmentPicker } from './GarmentPicker';
 import { UrlGarmentInput, type ResolveStage, type UrlResolveOutcome } from './UrlGarmentInput';
 import { DEFAULT_GARMENT, type SampleImage } from '@/core/garment/catalog';
@@ -25,6 +26,7 @@ export function TryOnScreen() {
   const setSettings = useAppStore((s) => s.setSettings);
   const setGarmentId = useAppStore((s) => s.setGarmentId);
   const setPrepInfo = useAppStore((s) => s.setPrepInfo);
+  const setHint = useAppStore((s) => s.setHint);
 
   function ensureMirror(): LiveMirror | null {
     if (mirrorRef.current) return mirrorRef.current;
@@ -43,6 +45,7 @@ export function TryOnScreen() {
           setMetrics(snapshot);
         },
         onError: (message, kind) => setError({ message, ...(kind ? { kind } : {}) }),
+        onHint: (hint) => setHint(hint),
       },
     );
     return mirrorRef.current;
@@ -182,6 +185,7 @@ export function TryOnScreen() {
       <div className="relative aspect-video w-full overflow-hidden rounded-2xl border border-white/10 bg-black shadow-2xl">
         <canvas ref={canvasRef} className="h-full w-full object-cover" />
         <StatsOverlay />
+        <HintOverlay />
         <StatusOverlay onStart={handleStart} />
       </div>
 

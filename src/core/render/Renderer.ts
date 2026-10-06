@@ -211,7 +211,6 @@ export class Renderer {
 
     gl.uniform2f(gl.getUniformLocation(p, 'uRes'), this.canvas.width, this.canvas.height);
     gl.uniform2f(gl.getUniformLocation(p, 'uSegRes'), this.segW || 1, this.segH || 1);
-    gl.uniform1f(gl.getUniformLocation(p, 'uOpacity'), fit.opacity);
     gl.uniform1i(gl.getUniformLocation(p, 'uHasSeg'), this.segUploaded ? 1 : 0);
     gl.uniform1i(gl.getUniformLocation(p, 'uOccSil'), settings.occludeSilhouette ? 1 : 0);
     gl.uniform1i(gl.getUniformLocation(p, 'uOccHairFace'), settings.occludeHairFace ? 1 : 0);
@@ -227,13 +226,17 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, this.videoTex);
     gl.uniform1i(gl.getUniformLocation(p, 'uVideo'), 2);
 
-    // Depth-ordered draw: a sleeve "behind" the torso is drawn first.
+    // Depth-ordered draw: a sleeve "behind" the torso is drawn first. Each part
+    // carries its own opacity so an untracked sleeve can fade out independently.
+    const opLoc = gl.getUniformLocation(p, 'uOpacity');
     const parts = [
-      { range: mesh.ranges.torso, z: 0 },
-      { range: mesh.ranges.leftSleeve, z: fit.leftSleeveBehind ? -1 : 1 },
-      { range: mesh.ranges.rightSleeve, z: fit.rightSleeveBehind ? -1 : 1 },
+      { range: mesh.ranges.torso, z: 0, op: fit.opacity },
+      { range: mesh.ranges.leftSleeve, z: fit.leftSleeveBehind ? -1 : 1, op: fit.opacity * (fit.leftSleeveOpacity ?? 1) },
+      { range: mesh.ranges.rightSleeve, z: fit.rightSleeveBehind ? -1 : 1, op: fit.opacity * (fit.rightSleeveOpacity ?? 1) },
     ].sort((a, b) => a.z - b.z);
     for (const part of parts) {
+      if (part.op <= 0.01) continue;
+      gl.uniform1f(opLoc, part.op);
       gl.drawElements(gl.TRIANGLES, part.range.count, gl.UNSIGNED_SHORT, part.range.start * 2);
     }
   }

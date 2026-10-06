@@ -173,6 +173,9 @@ export interface FitResult {
   /** Draw the left/right sleeve behind the torso (arm is behind the body). */
   leftSleeveBehind?: boolean;
   rightSleeveBehind?: boolean;
+  /** Per-sleeve opacity (0..1): fades a sleeve out when the arm isn't tracked. */
+  leftSleeveOpacity?: number;
+  rightSleeveOpacity?: number;
   /** Homography (garment texture-px -> screen-px), set by MeshWarpEngine only. */
   homography?: Mat3;
 }

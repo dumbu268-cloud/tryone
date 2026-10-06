@@ -5,6 +5,7 @@ import { Renderer, DEFAULT_RENDER_SETTINGS, type RenderSettings } from '@/core/r
 import { Metrics, type MetricsSnapshot } from '@/core/perf/Metrics';
 import { loadGarment } from '@/core/garment/loader';
 import { DEFAULT_GARMENT } from '@/core/garment/catalog';
+import { computeFramingHint } from './framing';
 import type { GarmentAsset, GarmentDescriptor } from '@/core/types';
 
 export type MirrorStatus = 'idle' | 'initializing' | 'running' | 'stopped' | 'error';
@@ -13,6 +14,8 @@ export interface LiveMirrorCallbacks {
   onStatus?: (status: MirrorStatus, detail?: string) => void;
   onMetrics?: (snapshot: MetricsSnapshot) => void;
   onError?: (message: string, kind?: string) => void;
+  /** Framing coach hint (null = looks good). Emitted only when it changes. */
+  onHint?: (hint: string | null) => void;
 }
 
 export interface LiveMirrorConfig {
@@ -53,6 +56,8 @@ export class LiveMirror {
   private rafHandle: number | null = null;
   private lastMetricsEmit = 0;
   private readonly metricsInterval: number;
+  private lastHint: string | null = null;
+  private hintPrimed = false;
 
   constructor(canvas: HTMLCanvasElement, config: LiveMirrorConfig = {}, cb: LiveMirrorCallbacks = {}) {
     this.canvas = canvas;
@@ -149,6 +154,9 @@ export class LiveMirror {
     this.camera.stop();
     this.perception.reset();
     this.metrics.reset();
+    this.lastHint = null;
+    this.hintPrimed = false;
+    this.cb.onHint?.(null);
     if (this.status !== 'error') this.setStatus('stopped');
   }
 
@@ -205,6 +213,8 @@ export class LiveMirror {
       this.renderer.render({ source: video, sourceReady, fit, frame, settings: this.settings });
       const t3 = performance.now();
       this.metrics.markRender(t3 - t2);
+
+      this.maybeEmitHint(computeFramingHint(frame));
     } catch (err) {
       // A transient per-frame error shouldn't kill the loop; log and continue.
       console.error('[live-mirror] frame error', err);
@@ -217,6 +227,14 @@ export class LiveMirror {
     if (now - this.lastMetricsEmit >= this.metricsInterval) {
       this.lastMetricsEmit = now;
       this.cb.onMetrics?.(this.metrics.snapshot());
+    }
+  }
+
+  private maybeEmitHint(hint: string | null): void {
+    if (hint !== this.lastHint || !this.hintPrimed) {
+      this.lastHint = hint;
+      this.hintPrimed = true;
+      this.cb.onHint?.(hint);
     }
   }
 
