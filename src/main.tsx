@@ -25,6 +25,14 @@ if (params.has('selftest')) {
   void import('./dev/visualtest').then(({ runVisualTest }) =>
     runVisualTest(imageUrl, canvas, garmentId, cropFrac),
   );
+} else if (params.has('mlprep')) {
+  // Dev/e2e path: ML garment extraction, cutout drawn over a checkerboard.
+  const imageUrl = params.get('img') ?? '/test/person.jpg';
+  const canvas = document.createElement('canvas');
+  canvas.id = 'visual-canvas';
+  canvas.style.maxWidth = '100%';
+  rootEl.appendChild(canvas);
+  void import('./dev/mlpreptest').then(({ runMlPrepTest }) => runMlPrepTest(imageUrl, canvas));
 } else if (params.has('preptest')) {
   // Dev/e2e path: auto-prepare a garment image, then wear it on a person image.
   const garmentUrl = params.get('garment') ?? '/garments/samples/sample-longsleeve.svg';
@@ -33,8 +41,9 @@ if (params.has('selftest')) {
   canvas.id = 'visual-canvas';
   canvas.style.maxWidth = '100%';
   rootEl.appendChild(canvas);
+  const useMl = params.has('ml');
   void import('./dev/preptest').then(({ runPrepTest }) =>
-    runPrepTest(garmentUrl, personUrl, canvas),
+    runPrepTest(garmentUrl, personUrl, canvas, useMl),
   );
 } else {
   createRoot(rootEl).render(

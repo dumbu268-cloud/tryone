@@ -218,6 +218,8 @@ export interface GarmentPrepDiagnostics {
   bbox: BBox;
   /** Fraction of pixels kept as garment after background removal (0..1). */
   foregroundRatio: number;
+  /** Which preparer produced this result. */
+  method?: 'ml' | 'classic';
 }
 
 export interface GarmentPrepResult {

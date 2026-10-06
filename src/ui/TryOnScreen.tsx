@@ -9,7 +9,7 @@ import { HintOverlay } from './HintOverlay';
 import { GarmentPicker } from './GarmentPicker';
 import { UrlGarmentInput, type ResolveStage, type UrlResolveOutcome } from './UrlGarmentInput';
 import type { SampleImage } from '@/core/garment/catalog';
-import { ClassicGarmentPreparer } from '@/core/garment/prep/prepare';
+import { HybridGarmentPreparer } from '@/core/garment/prep/mlPrepare';
 import { HttpProductResolver } from '@/core/product/HttpProductResolver';
 import { proxiedImageUrl } from '@/core/product/ProductResolver';
 import type { GarmentDescriptor, GarmentPrepResult } from '@/core/types';
@@ -17,7 +17,7 @@ import type { GarmentDescriptor, GarmentPrepResult } from '@/core/types';
 export function TryOnScreen() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mirrorRef = useRef<LiveMirror | null>(null);
-  const preparerRef = useRef<ClassicGarmentPreparer | null>(null);
+  const preparerRef = useRef<HybridGarmentPreparer | null>(null);
   const resolverRef = useRef<HttpProductResolver | null>(null);
 
   const setStatus = useAppStore((s) => s.setStatus);
@@ -71,8 +71,8 @@ export function TryOnScreen() {
     void ensureMirror()?.setGarment(g);
   };
 
-  function preparer(): ClassicGarmentPreparer {
-    if (!preparerRef.current) preparerRef.current = new ClassicGarmentPreparer();
+  function preparer(): HybridGarmentPreparer {
+    if (!preparerRef.current) preparerRef.current = new HybridGarmentPreparer();
     return preparerRef.current;
   }
 

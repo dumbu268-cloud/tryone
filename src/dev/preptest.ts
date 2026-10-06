@@ -5,7 +5,8 @@ import { BodyPerception } from '@/core/perception/BodyPerception';
 import { ArticulatedEngine } from '@/core/engine/ArticulatedEngine';
 import { Renderer, DEFAULT_RENDER_SETTINGS } from '@/core/render/Renderer';
 import { ClassicGarmentPreparer } from '@/core/garment/prep/prepare';
-import type { GarmentPrepDiagnostics } from '@/core/types';
+import { HybridGarmentPreparer } from '@/core/garment/prep/mlPrepare';
+import type { GarmentPrepDiagnostics, GarmentPreparer } from '@/core/types';
 
 export interface PrepTestReport extends Partial<GarmentPrepDiagnostics> {
   ok: boolean;
@@ -23,10 +24,13 @@ export async function runPrepTest(
   garmentUrl: string,
   personUrl: string,
   canvas: HTMLCanvasElement,
+  useMl = false,
 ): Promise<void> {
   try {
     const garmentImg = await loadImage(garmentUrl);
-    const preparer = new ClassicGarmentPreparer();
+    const preparer: GarmentPreparer = useMl
+      ? new HybridGarmentPreparer()
+      : new ClassicGarmentPreparer();
     const { asset, diagnostics } = await preparer.prepare(garmentImg);
 
     const person = await loadImage(personUrl);
