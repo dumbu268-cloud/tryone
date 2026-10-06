@@ -1,7 +1,12 @@
 import { Camera, CameraError, type CameraOptions } from '@/core/camera/Camera';
 import { BodyPerception, type PerceptionOptions } from '@/core/perception/BodyPerception';
 import { ArticulatedEngine, type ArticulatedOptions } from '@/core/engine/ArticulatedEngine';
-import { Renderer, DEFAULT_RENDER_SETTINGS, type RenderSettings } from '@/core/render/Renderer';
+import {
+  Renderer,
+  DEFAULT_RENDER_SETTINGS,
+  needsSegmentation,
+  type RenderSettings,
+} from '@/core/render/Renderer';
 import { Metrics, type MetricsSnapshot } from '@/core/perf/Metrics';
 import { loadGarment } from '@/core/garment/loader';
 import { DEFAULT_GARMENT } from '@/core/garment/catalog';
@@ -79,6 +84,7 @@ export class LiveMirror {
 
   setRenderSettings(partial: Partial<RenderSettings>): void {
     this.settings = { ...this.settings, ...partial };
+    this.syncSegmentation();
   }
 
   getGarmentId(): string {
@@ -104,6 +110,14 @@ export class LiveMirror {
   private applyGarment(garment: GarmentAsset): void {
     this.engine.prepare(garment);
     this.renderer?.setGarment(garment);
+    this.coversForearm = garment.layout.coversForearm;
+    this.syncSegmentation();
+  }
+
+  private coversForearm = true;
+
+  private syncSegmentation(): void {
+    this.perception.setSegmentationEnabled(needsSegmentation(this.settings, this.coversForearm));
   }
 
   async start(): Promise<void> {

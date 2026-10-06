@@ -66,15 +66,27 @@ export function createTexture(
   return tex;
 }
 
-/** Upload an image/video/canvas source as an RGBA texture (flipped to screen Y). */
+/**
+ * Upload an image/video/canvas source as an RGBA texture (flipped to screen Y).
+ * `premultiply` stores premultiplied alpha (needed for clean edges on cutouts);
+ * `mipmaps` builds a mip chain (minification quality / low-frequency sampling).
+ */
 export function uploadRGBA(
   gl: WebGL2RenderingContext,
   tex: WebGLTexture,
   source: TexImageSource,
+  premultiply = false,
+  mipmaps = false,
 ): void {
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, premultiply);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  if (mipmaps) {
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  }
 }
 
 /** Upload a single-channel (R8) texture from raw bytes (flipped to screen Y). */

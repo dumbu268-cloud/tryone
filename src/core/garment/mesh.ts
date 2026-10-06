@@ -1,151 +1,173 @@
-import type { GarmentAsset, Quad, SleeveLayout, Vec2 } from '@/core/types';
+import type { GarmentAsset, GarmentRig, SleeveRig, Vec2 } from '@/core/types';
+import { rigFromLayout } from './rig';
+import { capFraction, makeTube, polylineLength, type Tube } from '@/core/fit/tube';
+import * as v from '@/core/math/vec';
 
-// Builds the deformable garment mesh from a garment's layout. Both the engine
-// (which computes per-vertex screen positions) and the renderer (which draws
-// them) call this deterministically, so vertex order matches on both sides.
-//
-// Vertex channels:
-//   region : 0 torso, 1 left sleeve, 2 right sleeve
-//   paramA : torso u (0..1 left→right)  | sleeve t (0 armhole → 1 cuff)
-//   paramB : torso v (0..1 top→hem)     | sleeve s (-1 top/shoulder → +1 underarm)
-//   uv     : garment texture coordinate (0..1)
-//   alpha  : base edge feather (soft garment boundaries)
+// Garment mesh built from the garment RIG (not a fixed template):
+//   - torso: a grid over the garment's own texture region; each vertex carries
+//     its texture position and is warped by the torso TPS at fit time.
+//   - sleeves: grids in tube space (t along the source sleeve skeleton, s across);
+//     texture coords come from the source tube, screen positions from the
+//     user's arm tube. A region map (see regionPolygons) keeps sleeve texels out
+//     of the torso pass and vice versa.
 
 export type MeshRegionId = 0 | 1 | 2;
 
 export interface MeshRange {
-  /** First index (into `indices`) for this region. */
   start: number;
   count: number;
 }
 
+export interface SleeveSource {
+  rig: SleeveRig;
+  tube: Tube;
+  /** Shoulder-cap fraction shared by texture and screen tubes. */
+  cap: number;
+  /** Half-width on the armhole line (shoulder tip → armpit), texture px. */
+  armholeHalf: number;
+}
+
 export interface GarmentMesh {
   vertexCount: number;
-  uv: Float32Array; // 2 * N
-  alpha: Float32Array; // N
-  region: Uint8Array; // N
-  paramA: Float32Array; // N
-  paramB: Float32Array; // N
+  uv: Float32Array;
+  alpha: Float32Array;
+  region: Uint8Array;
+  /** Texture-pixel position per vertex (used by the torso warp). */
+  texPx: Float32Array;
+  /** Sleeve tube parameters per vertex: t (along) / s (across). */
+  paramA: Float32Array;
+  paramB: Float32Array;
   indices: Uint16Array;
   ranges: { torso: MeshRange; leftSleeve: MeshRange; rightSleeve: MeshRange };
+  rig: GarmentRig;
+  sleeveL: SleeveSource | null;
+  sleeveR: SleeveSource | null;
 }
 
-const TORSO_COLS = 8;
-const TORSO_ROWS = 12;
-const SLEEVE_LEN = 10;
-const SLEEVE_WID = 4;
+const TORSO_COLS = 16;
+const TORSO_ROWS = 20;
+const SLEEVE_LEN = 14;
+const SLEEVE_WID = 6;
+/** Sleeve meshes extend slightly past the measured half-width / cuff. */
+export const SLEEVE_S_EXTENT = 1.15;
 
-function bilinear(q: Quad, u: number, v: number): Vec2 {
-  const top = { x: q.tl.x + (q.tr.x - q.tl.x) * u, y: q.tl.y + (q.tr.y - q.tl.y) * u };
-  const bot = { x: q.bl.x + (q.br.x - q.bl.x) * u, y: q.bl.y + (q.br.y - q.bl.y) * u };
-  return { x: top.x + (bot.x - top.x) * v, y: top.y + (bot.y - top.y) * v };
+export function resolveRig(garment: GarmentAsset): GarmentRig {
+  return garment.layout.rig ?? rigFromLayout(garment.layout);
 }
 
-function sleevePoint(s: SleeveLayout, t: number, acrossU: number): Vec2 {
-  const top = { x: s.rootTop.x + (s.tipTop.x - s.rootTop.x) * t, y: s.rootTop.y + (s.tipTop.y - s.rootTop.y) * t };
-  const bot = {
-    x: s.rootBottom.x + (s.tipBottom.x - s.rootBottom.x) * t,
-    y: s.rootBottom.y + (s.tipBottom.y - s.rootBottom.y) * t,
+export function sleeveSource(rig: GarmentRig, side: 'L' | 'R'): SleeveSource | null {
+  const s = side === 'L' ? rig.sleeveL : rig.sleeveR;
+  if (!s || s.axis.length < 2) return null;
+  const tip = side === 'L' ? rig.shoulderL : rig.shoulderR;
+  const pit = side === 'L' ? rig.armpitL : rig.armpitR;
+  const armholeHalf = Math.max(1, v.dist(tip, pit) / 2);
+  const length = polylineLength(s.axis);
+  if (length < 2) return null;
+  const cap = capFraction(armholeHalf, length);
+  const tube = makeTube(
+    s.axis,
+    { root: armholeHalf, mid: s.rootHalfWidth, tip: s.tipHalfWidth },
+    side,
+    v.sub(pit, tip),
+    cap,
+  );
+  return { rig: s, tube, cap, armholeHalf };
+}
+
+/** Texture-space outline polygons of each sleeve (for the region map). */
+export function regionPolygons(mesh: GarmentMesh): { left: Vec2[] | null; right: Vec2[] | null } {
+  const poly = (src: SleeveSource | null): Vec2[] | null => {
+    if (!src) return null;
+    const top: Vec2[] = [];
+    const bot: Vec2[] = [];
+    for (let i = 0; i <= 24; i++) {
+      const t = i / 24;
+      top.push(src.tube.pointAt(t, -SLEEVE_S_EXTENT));
+      bot.push(src.tube.pointAt(t, SLEEVE_S_EXTENT));
+    }
+    // Close past the cuff a little to capture the cuff band.
+    const cuffDir = v.normalize(v.sub(src.tube.pointAt(1, 0), src.tube.pointAt(0.95, 0)));
+    const ext = v.scale(cuffDir, 0.06 * src.tube.length);
+    top.push(v.add(top[top.length - 1]!, ext));
+    bot.push(v.add(bot[bot.length - 1]!, ext));
+    return [...top, ...bot.reverse()];
   };
-  return { x: top.x + (bot.x - top.x) * acrossU, y: top.y + (bot.y - top.y) * acrossU };
+  return { left: poly(mesh.sleeveL), right: poly(mesh.sleeveR) };
 }
-
-const smoothstep = (a: number, b: number, x: number): number => {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-};
 
 export function buildGarmentMesh(garment: GarmentAsset): GarmentMesh {
   const texW = garment.textureWidth;
   const texH = garment.textureHeight;
-  const layout = garment.layout;
+  const rig = resolveRig(garment);
 
   const uv: number[] = [];
   const alpha: number[] = [];
   const region: number[] = [];
+  const texPx: number[] = [];
   const paramA: number[] = [];
   const paramB: number[] = [];
   const indices: number[] = [];
 
-  const pushVertex = (texPx: Vec2, a: number, reg: number, pa: number, pb: number) => {
-    uv.push(texPx.x / texW, texPx.y / texH);
-    alpha.push(a);
+  const push = (p: Vec2, reg: number, a: number, b: number) => {
+    uv.push(p.x / texW, p.y / texH);
+    texPx.push(p.x, p.y);
+    alpha.push(1);
     region.push(reg);
-    paramA.push(pa);
-    paramB.push(pb);
+    paramA.push(a);
+    paramB.push(b);
   };
 
-  const addGrid = (
-    cols: number,
-    rows: number,
-    base: number,
-    place: (c: number, r: number) => { texPx: Vec2; a: number; pa: number; pb: number },
-    reg: number,
-  ): MeshRange => {
+  const grid = (cols: number, rows: number, place: (c: number, r: number) => void): MeshRange => {
+    const base = uv.length / 2;
     const start = indices.length;
-    for (let r = 0; r <= rows; r++) {
-      for (let c = 0; c <= cols; c++) {
-        const { texPx, a, pa, pb } = place(c, r);
-        pushVertex(texPx, a, reg, pa, pb);
-      }
-    }
+    for (let r = 0; r <= rows; r++) for (let c = 0; c <= cols; c++) place(c, r);
     const stride = cols + 1;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const i0 = base + r * stride + c;
-        const i1 = i0 + 1;
-        const i2 = i0 + stride;
-        const i3 = i2 + 1;
-        indices.push(i0, i1, i2, i1, i3, i2);
+        indices.push(i0, i0 + 1, i0 + stride, i0 + 1, i0 + stride + 1, i0 + stride);
       }
     }
     return { start, count: indices.length - start };
   };
 
-  // --- Torso ---
-  const torsoBase = 0;
-  const torsoRange = addGrid(
-    TORSO_COLS,
-    TORSO_ROWS,
-    torsoBase,
-    (c, r) => {
-      const u = c / TORSO_COLS;
-      const v = r / TORSO_ROWS;
-      const texPx = bilinear(layout.torso, u, v);
-      // Feather the hem and the vertical side seams a touch.
-      const hem = 1 - smoothstep(0.9, 1.0, v) * 0.5;
-      const side = Math.min(smoothstep(0, 0.04, u), smoothstep(0, 0.04, 1 - u)) * 0.15 + 0.85;
-      return { texPx, a: Math.min(hem, side), pa: u, pb: v };
-    },
-    0,
+  // Torso: cover the garment's own texture region around the torso keypoints.
+  const pts = [rig.neckL, rig.neckR, rig.shoulderL, rig.shoulderR, rig.armpitL, rig.armpitR, rig.hemL, rig.hemR];
+  const tw = Math.max(1, v.dist(rig.shoulderL, rig.shoulderR));
+  const th = Math.max(1, Math.max(rig.hemL.y, rig.hemR.y) - Math.min(rig.neckL.y, rig.neckR.y));
+  const x0 = v.clamp(Math.min(...pts.map((p) => p.x)) - 0.3 * tw, 0, texW);
+  const x1 = v.clamp(Math.max(...pts.map((p) => p.x)) + 0.3 * tw, 0, texW);
+  const y0 = v.clamp(Math.min(...pts.map((p) => p.y)) - 0.18 * th, 0, texH);
+  const y1 = v.clamp(Math.max(...pts.map((p) => p.y)) + 0.12 * th, 0, texH);
+  const torso = grid(TORSO_COLS, TORSO_ROWS, (c, r) =>
+    push({ x: v.lerpN(x0, x1, c / TORSO_COLS), y: v.lerpN(y0, y1, r / TORSO_ROWS) }, 0, 0, 0),
   );
 
-  // --- Sleeves ---
-  const sleevePlace = (s: SleeveLayout) => (c: number, r: number) => {
-    const t = c / SLEEVE_LEN;
-    const across = r / SLEEVE_WID; // 0..1 top→bottom
-    const sParam = across * 2 - 1; // -1..+1
-    const texPx = sleevePoint(s, t, across);
-    // Feather the cuff (tip) and the long edges.
-    const cuff = 1 - smoothstep(0.86, 1.0, t) * 0.55;
-    const edge = Math.min(smoothstep(0, 0.12, across), smoothstep(0, 0.12, 1 - across)) * 0.2 + 0.8;
-    return { texPx, a: Math.min(cuff, edge), pa: t, pb: sParam };
+  const sleeveL = sleeveSource(rig, 'L');
+  const sleeveR = sleeveSource(rig, 'R');
+  const sleeveGrid = (src: SleeveSource | null, reg: number): MeshRange => {
+    if (!src) return { start: indices.length, count: 0 };
+    return grid(SLEEVE_LEN, SLEEVE_WID, (c, r) => {
+      const t = c / SLEEVE_LEN;
+      const s = (r / SLEEVE_WID) * 2 * SLEEVE_S_EXTENT - SLEEVE_S_EXTENT;
+      push(src.tube.pointAt(t, s), reg, t, s);
+    });
   };
-
-  const leftBase = uv.length / 2;
-  const leftRange = addGrid(SLEEVE_LEN, SLEEVE_WID, leftBase, sleevePlace(layout.leftSleeve), 1);
-
-  const rightBase = uv.length / 2;
-  const rightRange = addGrid(SLEEVE_LEN, SLEEVE_WID, rightBase, sleevePlace(layout.rightSleeve), 2);
+  const leftSleeve = sleeveGrid(sleeveL, 1);
+  const rightSleeve = sleeveGrid(sleeveR, 2);
 
   return {
     vertexCount: uv.length / 2,
     uv: new Float32Array(uv),
     alpha: new Float32Array(alpha),
     region: new Uint8Array(region),
+    texPx: new Float32Array(texPx),
     paramA: new Float32Array(paramA),
     paramB: new Float32Array(paramB),
     indices: new Uint16Array(indices),
-    ranges: { torso: torsoRange, leftSleeve: leftRange, rightSleeve: rightRange },
+    ranges: { torso, leftSleeve, rightSleeve },
+    rig,
+    sleeveL,
+    sleeveR,
   };
 }

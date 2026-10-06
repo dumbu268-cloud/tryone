@@ -56,7 +56,7 @@ export async function runSelfTest(imageUrl: string): Promise<SelfTestResult> {
     const garment = await loadGarment(DEFAULT_GARMENT);
     engine.prepare(garment);
     let fit: FitResult | null = null;
-    for (let i = 0; i < 40; i++) fit = engine.fit(frame);
+    for (let i = 0; i < 40; i++) fit = engine.fit({ ...frame, timestamp: frame.timestamp + i * 33 });
     if (!fit) throw new Error('no fit produced');
     result.fitVisible = fit.visible;
     result.fitOpacity = fit.opacity;

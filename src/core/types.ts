@@ -121,6 +121,40 @@ export interface GarmentLayout {
   sleeveLength: 'short' | 'long';
   /** True when sleeves cover the forearm (disables the bare-forearm repaint). */
   coversForearm: boolean;
+  /**
+   * Keypoint rig used by the fitting engine. When absent it is derived from the
+   * coarse torso/sleeve quads above (legacy garments).
+   */
+  rig?: GarmentRig;
+}
+
+/** A sleeve in texture space: a skeleton from the armhole centre to the cuff. */
+export interface SleeveRig {
+  /** Polyline; axis[0] is the armhole centre (midpoint of shoulder tip & armpit). */
+  axis: Vec2[];
+  rootHalfWidth: number;
+  tipHalfWidth: number;
+}
+
+/**
+ * Named garment keypoints in texture space ("L"/"R" = image-left/right). They
+ * correspond 1:1 to body keypoints estimated on the user, so fitting is a
+ * keypoint-correspondence warp instead of a fixed template.
+ */
+export interface GarmentRig {
+  neckL: Vec2;
+  neckR: Vec2;
+  /** Shoulder seam tips (where sleeves attach at the top). */
+  shoulderL: Vec2;
+  shoulderR: Vec2;
+  armpitL: Vec2;
+  armpitR: Vec2;
+  hemL: Vec2;
+  hemR: Vec2;
+  sleeveL: SleeveRig | null;
+  sleeveR: SleeveRig | null;
+  /** How the rig was obtained: source-model pose, flat-lay silhouette, or legacy layout. */
+  source: 'pose' | 'silhouette' | 'layout';
 }
 
 /** Serializable garment description (no decoded image). */
@@ -178,6 +212,17 @@ export interface FitResult {
   rightSleeveOpacity?: number;
   /** Homography (garment texture-px -> screen-px), set by MeshWarpEngine only. */
   homography?: Mat3;
+  /** Diagnostics for the debug overlay and test bench. */
+  debug?: FitDebug;
+}
+
+export type ArmTrackState = 'tracked' | 'partial' | 'held' | 'rest';
+
+export interface FitDebug {
+  /** Body target keypoints: neckL, neckR, shoulderL, shoulderR, armpitL, armpitR, hemL, hemR. */
+  keypoints: Vec2[];
+  /** Image-left then image-right arm: tracking state + joint chain used for the sleeve. */
+  arms: { state: ArmTrackState; chain: Vec2[] }[];
 }
 
 /**

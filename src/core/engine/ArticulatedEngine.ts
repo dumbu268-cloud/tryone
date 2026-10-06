@@ -1,37 +1,46 @@
 import type {
+  ArmTrackState,
   FitResult,
   GarmentAsset,
-  GarmentLayout,
+  GarmentRig,
   PoseFrame,
   Quad,
   TryOnEngine,
   Vec2,
 } from '@/core/types';
+import { buildGarmentMesh, type GarmentMesh, type SleeveSource } from '@/core/garment/mesh';
+import { BODY, estimateBodyKeypoints, type ArmChainIdx, type BodyKeypoints, type LandmarkPx } from '@/core/fit/bodyRig';
+import { solveAffine, solveTps, type Warp2D } from '@/core/math/tps';
+import { fitPolylineLength, makeTube } from '@/core/fit/tube';
 import { PoseLandmark } from '@/core/perception/landmarks';
-import { buildGarmentMesh, type GarmentMesh } from '@/core/garment/mesh';
 import * as v from '@/core/math/vec';
 
+/**
+ * Rig-based try-on engine.
+ *
+ * Torso: thin-plate-spline warp from the garment's own keypoints (neck sides,
+ * shoulder tips, armpits, hem) to the user's body keypoints. Neck/shoulders/
+ * armpits come from the body; the hem keeps the garment's own length and taper,
+ * so different garments produce different geometry. The torso never depends on
+ * arm landmarks.
+ *
+ * Sleeves: tubes along shoulder→elbow→wrist. The upper sleeve needs only the
+ * elbow; a missing wrist extends the forearm instead of disabling the arm.
+ * Joint reliability includes "is it inside the frame" and uses hysteresis; when
+ * an arm is lost, the last good pose is held (in body-relative coordinates) and
+ * eases to a natural resting hang. Sleeves never disappear.
+ */
+
 export interface ArticulatedOptions {
-  /** Garment shoulders sit this much wider than the body shoulder landmarks. */
-  shoulderWidthFactor?: number;
-  /** Lift the shoulder seam toward the neck, as a fraction of garment length. */
-  shoulderLiftFactor?: number;
-  fadeSpeed?: number;
-  minTorsoPx?: number;
-  /** Fraction down the torso side where the armhole (underarm) sits. */
-  underarmV?: number;
-  /** Landmark visibility below which an arm is treated as untracked. */
-  armVisibility?: number;
+  /** Fade time constant (ms); frame-rate independent. */
+  fadeMs?: number;
+  /** How long to hold the last fit when the person is lost (ms). */
+  holdMs?: number;
+  /** Time constant for a lost arm easing to rest (ms). */
+  armDecayMs?: number;
 }
 
-const DEFAULTS: Required<ArticulatedOptions> = {
-  shoulderWidthFactor: 1.12,
-  shoulderLiftFactor: 0.05,
-  fadeSpeed: 0.22,
-  minTorsoPx: 24,
-  underarmV: 0.3,
-  armVisibility: 0.5,
-};
+const DEFAULTS: Required<ArticulatedOptions> = { fadeMs: 140, holdMs: 700, armDecayMs: 900 };
 
 const ZERO_QUAD: Quad = {
   tl: { x: 0, y: 0 },
@@ -40,42 +49,38 @@ const ZERO_QUAD: Quad = {
   bl: { x: 0, y: 0 },
 };
 
-interface ArmChain {
-  shoulderIdx: number;
-  elbowIdx: number;
-  wristIdx: number;
+/** Flat-lay sleeves are a flattened tube: worn projected width ≈ 2/π of it. */
+const FLAT_TO_WORN = 2 / Math.PI;
+
+interface JointTrack {
+  rel: number; // smoothed reliability
+  on: boolean; // hysteresis state
+  lastGood: Vec2 | null; // body-relative
+  lastGoodT: number;
 }
 
-/** Garment-intrinsic proportions, relative to its own shoulder width. */
-interface GarmentProportions {
-  hemWidthRatio: number;
-  torsoLenRatio: number;
-  leftSleeveLenRatio: number;
-  rightSleeveLenRatio: number;
-  leftSleeveTipRatio: number;
-  rightSleeveTipRatio: number;
+interface ArmTrack {
+  elbow: JointTrack;
+  wrist: JointTrack;
+  /** Last good forearm direction (body-relative unit vector). */
+  forearmDir: Vec2 | null;
 }
 
-interface Skeleton {
-  pointAt(t: number, s: number): Vec2;
-}
+const newJoint = (): JointTrack => ({ rel: 0, on: false, lastGood: null, lastGoodT: -Infinity });
+const newArm = (): ArmTrack => ({ elbow: newJoint(), wrist: newJoint(), forearmDir: null });
 
-/**
- * ArticulatedEngine — garment-proportioned deformable try-on.
- *
- * The garment's own layout determines its shape (torso width/length/hem + sleeve
- * length/width); the body only places/scales/orients/leans it. So different
- * garments produce visibly different geometry, while the fit tracks the user.
- * Sleeves articulate to the elbow/wrist when visible and rest in a natural hang
- * (never vanish) when the arms aren't tracked.
- */
 export class ArticulatedEngine implements TryOnEngine {
-  readonly id = 'articulated-v2';
+  readonly id = 'rig-tps-v3';
   private readonly opts: Required<ArticulatedOptions>;
   private mesh: GarmentMesh | null = null;
-  private prop: GarmentProportions = flatProportions();
+  private rig: GarmentRig | null = null;
   private positions: Float32Array = new Float32Array(0);
   private opacity = 0;
+  private hipRel = 0;
+  private arms: [ArmTrack, ArmTrack] = [newArm(), newArm()];
+  private last: FitResult | null = null;
+  private lastValidT = -Infinity;
+  private lastT: number | null = null;
 
   constructor(options: ArticulatedOptions = {}) {
     this.opts = { ...DEFAULTS, ...options };
@@ -83,303 +88,271 @@ export class ArticulatedEngine implements TryOnEngine {
 
   prepare(garment: GarmentAsset): void {
     this.mesh = buildGarmentMesh(garment);
-    this.prop = computeProportions(garment.layout);
+    this.rig = this.mesh.rig;
     this.positions = new Float32Array(this.mesh.vertexCount * 2);
     this.opacity = 0;
+    this.arms = [newArm(), newArm()];
+    this.last = null;
+    this.lastT = null;
   }
 
   fit(frame: PoseFrame): FitResult {
     const mesh = this.mesh;
-    if (!mesh) return invisible();
+    const rig = this.rig;
+    if (!mesh || !rig) return invisible();
+    const now = frame.timestamp;
+    const dt = this.lastT === null ? 33 : v.clamp(now - this.lastT, 1, 250);
+    this.lastT = now;
+    const k = 1 - Math.exp(-dt / this.opts.fadeMs);
 
-    const geo = this.torsoGeometry(frame);
-    const target = geo ? 1 : 0;
-    this.opacity += (target - this.opacity) * this.opts.fadeSpeed;
-    if (!geo) {
+    const lm = this.reliableLandmarks(frame);
+    const body = frame.valid && lm ? estimateBodyKeypoints(lm, this.hipRel) : null;
+
+    if (!body) {
+      // Hold the last fit briefly (landmark dropouts), then fade out.
+      if (this.last && now - this.lastValidT < this.opts.holdMs) return { ...this.last };
+      this.opacity += (0 - this.opacity) * k;
       if (this.opacity < 0.02) this.opacity = 0;
-      return { ...invisible(), opacity: this.opacity };
+      return this.last
+        ? { ...this.last, opacity: this.opacity, visible: this.opacity > 0.02 }
+        : { ...invisible(), opacity: this.opacity };
     }
+    this.lastValidT = now;
+    this.opacity += (1 - this.opacity) * k;
 
-    const left = this.buildArm(frame, geo, geo.leftArm, geo.quad.tl, geo.quad.bl, true);
-    const right = this.buildArm(frame, geo, geo.rightArm, geo.quad.tr, geo.quad.br, false);
+    // --- Torso: TPS from garment keypoints → body keypoints ------------------
+    const hem = this.hemTargets(rig, body);
+    const src = [rig.neckL, rig.neckR, rig.shoulderL, rig.shoulderR, rig.armpitL, rig.armpitR, rig.hemL, rig.hemR];
+    const dst = [body.neckL, body.neckR, body.shoulderL, body.shoulderR, body.armpitL, body.armpitR, hem.l, hem.r];
+    const warp: Warp2D | null = solveTps(src, dst, 1e-4) ?? solveAffine(src, dst);
+    if (!warp) return this.last ?? invisible();
 
     const pos = this.positions;
-    const { region, paramA, paramB } = mesh;
+    const { region, texPx, paramA, paramB } = mesh;
+    // --- Sleeves --------------------------------------------------------------
+    const scale = v.dist(body.shoulderL, body.shoulderR) / Math.max(1, v.dist(rig.shoulderL, rig.shoulderR));
+    const flat = rig.source !== 'pose';
+    const armL = this.trackArm(0, lm!, body, body.armL, -1, now);
+    const armR = this.trackArm(1, lm!, body, body.armR, 1, now);
+    const tubeL = this.sleeveTube(mesh.sleeveL, 'L', body, armL.chain, scale, flat);
+    const tubeR = this.sleeveTube(mesh.sleeveR, 'R', body, armR.chain, scale, flat);
+
     for (let i = 0; i < mesh.vertexCount; i++) {
-      const a = paramA[i]!;
-      const b = paramB[i]!;
       let p: Vec2;
-      if (region[i] === 0) p = bilinear(geo.quad, a, b);
-      else if (region[i] === 1) p = left.pointAt(a, b);
-      else p = right.pointAt(a, b);
+      const reg = region[i];
+      if (reg === 0) p = warp.map({ x: texPx[i * 2]!, y: texPx[i * 2 + 1]! });
+      else if (reg === 1 && tubeL) p = tubeL.pointAt(paramA[i]!, paramB[i]!);
+      else if (reg === 2 && tubeR) p = tubeR.pointAt(paramA[i]!, paramB[i]!);
+      else p = body.center;
       pos[i * 2] = p.x;
       pos[i * 2 + 1] = p.y;
     }
 
-    const lz = frame.normalized[geo.leftArm.shoulderIdx]?.z ?? 0;
-    const rz = frame.normalized[geo.rightArm.shoulderIdx]?.z ?? 0;
-    const shoulderZ = (lz + rz) / 2;
+    const shoulderZ =
+      ((frame.normalized[PoseLandmark.LEFT_SHOULDER]?.z ?? 0) + (frame.normalized[PoseLandmark.RIGHT_SHOULDER]?.z ?? 0)) / 2;
+    const behind = (chain: ArmChainIdx, state: ArmTrackState) => {
+      if (state === 'rest' || state === 'held') return false;
+      const zw = frame.normalized[chain.wrist]?.z ?? 0;
+      const ze = frame.normalized[chain.elbow]?.z ?? 0;
+      return Math.min(zw, ze) > shoulderZ + 0.12;
+    };
 
-    return {
-      quad: geo.quad,
+    const result: FitResult = {
+      quad: { tl: body.shoulderL, tr: body.shoulderR, br: hem.r, bl: hem.l },
       opacity: this.opacity,
       visible: this.opacity > 0.02,
       positions: pos,
-      leftSleeveBehind: this.isBehind(frame, geo.leftArm.wristIdx, shoulderZ),
-      rightSleeveBehind: this.isBehind(frame, geo.rightArm.wristIdx, shoulderZ),
+      leftSleeveBehind: behind(body.armL, armL.state),
+      rightSleeveBehind: behind(body.armR, armR.state),
+      debug: {
+        keypoints: dst,
+        arms: [
+          { state: armL.state, chain: armL.chain },
+          { state: armR.state, chain: armR.chain },
+        ],
+      },
     };
+    this.last = result;
+    return result;
   }
 
-  private isBehind(frame: PoseFrame, wristIdx: number, shoulderZ: number): boolean {
-    const n = frame.normalized[wristIdx];
-    if (!n) return false;
-    return n.z > shoulderZ + 0.08;
+  /** Landmarks in screen px with reliability = visibility × in-frame. Updates hip reliability. */
+  private reliableLandmarks(frame: PoseFrame): LandmarkPx[] | null {
+    if (frame.image.length < 33 || frame.normalized.length < 33) return null;
+    const out: LandmarkPx[] = new Array(33);
+    for (let i = 0; i < 33; i++) {
+      const n = frame.normalized[i]!;
+      const p = frame.image[i]!;
+      out[i] = { x: p.x, y: p.y, visibility: (n.visibility ?? 0) * inFrame(n.x, n.y) };
+    }
+    const hip = Math.min(out[PoseLandmark.LEFT_HIP]!.visibility, out[PoseLandmark.RIGHT_HIP]!.visibility);
+    this.hipRel += (smooth01(0.45, 0.75, hip) - this.hipRel) * 0.3;
+    return out;
   }
 
-  private torsoGeometry(frame: PoseFrame): TorsoGeometry | null {
-    const lm = frame.image;
-    if (!frame.valid || lm.length < 33) return null;
+  /** Hem keeps the garment's own length + taper, placed along the body's torso direction. */
+  private hemTargets(rig: GarmentRig, body: BodyKeypoints): { l: Vec2; r: Vec2 } {
+    const gO = v.mid(rig.shoulderL, rig.shoulderR);
+    const gX = v.normalize(v.sub(rig.shoulderR, rig.shoulderL));
+    const gY = { x: -gX.y, y: gX.x };
+    const gPitMid = v.mid(rig.armpitL, rig.armpitR);
+    const gPitW = Math.max(1, v.dist(rig.armpitL, rig.armpitR));
 
-    const s11 = lm[PoseLandmark.LEFT_SHOULDER]!;
-    const s12 = lm[PoseLandmark.RIGHT_SHOULDER]!;
-    const h23 = lm[PoseLandmark.LEFT_HIP]!;
-    const h24 = lm[PoseLandmark.RIGHT_HIP]!;
+    const bO = v.mid(body.shoulderL, body.shoulderR);
+    const s = v.dist(body.shoulderL, body.shoulderR) / Math.max(1, v.dist(rig.shoulderL, rig.shoulderR));
+    const bPitMid = v.mid(body.armpitL, body.armpitR);
+    const bPitW = v.dist(body.armpitL, body.armpitR);
+    const hemAxis = body.hipAxis;
+    const bY = body.torsoDir;
 
-    const leftIs11 = s11.x <= s12.x;
-    const leftShoulder = leftIs11 ? s11 : s12;
-    const rightShoulder = leftIs11 ? s12 : s11;
-    const leftArm: ArmChain = leftIs11
-      ? { shoulderIdx: 11, elbowIdx: 13, wristIdx: 15 }
-      : { shoulderIdx: 12, elbowIdx: 14, wristIdx: 16 };
-    const rightArm: ArmChain = leftIs11
-      ? { shoulderIdx: 12, elbowIdx: 14, wristIdx: 16 }
-      : { shoulderIdx: 11, elbowIdx: 13, wristIdx: 15 };
-
-    const shoulderMid = v.mid(leftShoulder, rightShoulder);
-    const bodyShoulderW = v.dist(leftShoulder, rightShoulder);
-    if (bodyShoulderW < this.opts.minTorsoPx) return null;
-
-    let shoulderAxis = v.normalize(v.sub(rightShoulder, leftShoulder));
-    if (v.len(shoulderAxis) < 0.5) shoulderAxis = { x: 1, y: 0 };
-    let down = v.perp(shoulderAxis);
-    if (down.y < 0) down = v.scale(down, -1);
-
-    // Body torso DIRECTION (lean) from shoulders→hips; its length is not used —
-    // the garment supplies the length. Synthesize/clamp only the direction.
-    const hipVis = Math.min(
-      frame.normalized[PoseLandmark.LEFT_HIP]?.visibility ?? 0,
-      frame.normalized[PoseLandmark.RIGHT_HIP]?.visibility ?? 0,
-    );
-    const hb = smooth01(0.35, 0.6, hipVis);
-    const measLeftHip = h23.x <= h24.x ? h23 : h24;
-    const measRightHip = h23.x <= h24.x ? h24 : h23;
-    const measHipMid = v.mid(measLeftHip, measRightHip);
-    let measHipAxis = v.normalize(v.sub(measRightHip, measLeftHip));
-    if (v.len(measHipAxis) < 0.5) measHipAxis = shoulderAxis;
-    const synthHipMid = v.add(shoulderMid, v.scale(down, bodyShoulderW * 1.5));
-
-    const hipMid = v.lerp(synthHipMid, measHipMid, hb);
-    let hipAxis = v.normalize(v.lerp(shoulderAxis, measHipAxis, hb));
-    if (v.len(hipAxis) < 0.5) hipAxis = shoulderAxis;
-
-    const torsoVec = v.sub(hipMid, shoulderMid);
-    let torsoDir = v.len(torsoVec) > 1 ? v.normalize(torsoVec) : down;
-    // Never let the garment render upside down.
-    if (v.dot(torsoDir, down) <= 0) torsoDir = down;
-
-    // --- Garment-proportioned quad -----------------------------------------
-    const factor = this.opts.shoulderWidthFactor;
-    const scaleUnit = bodyShoulderW * factor; // garment shoulder width -> body
-    const topHalf = scaleUnit / 2;
-    const botHalf = topHalf * this.prop.hemWidthRatio;
-    const lenScreen = this.prop.torsoLenRatio * scaleUnit;
-
-    const top = v.sub(shoulderMid, v.scale(torsoDir, this.opts.shoulderLiftFactor * lenScreen));
-    const bottom = v.add(top, v.scale(torsoDir, lenScreen));
-
-    const quad: Quad = {
-      tl: v.sub(top, v.scale(shoulderAxis, topHalf)),
-      tr: v.add(top, v.scale(shoulderAxis, topHalf)),
-      bl: v.sub(bottom, v.scale(hipAxis, botHalf)),
-      br: v.add(bottom, v.scale(hipAxis, botHalf)),
+    // Depth below the shoulders scales with body size; width keeps the garment's
+    // hem/chest ratio relative to the body's chest (armpit) width.
+    const place = (p: Vec2): Vec2 => {
+      const depth = v.dot(v.sub(p, gO), gY) * s;
+      const across = (v.dot(v.sub(p, gPitMid), gX) / gPitW) * bPitW;
+      const pitDepth = v.dot(v.sub(bPitMid, bO), bY);
+      const base = v.add(bPitMid, v.scale(bY, depth - pitDepth));
+      return v.add(base, v.scale(hemAxis, across));
     };
-    for (const p of [quad.tl, quad.tr, quad.bl, quad.br]) {
-      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
-    }
-    return { quad, torsoDir, torsoLen: lenScreen, scaleUnit, shoulderAxis, leftArm, rightArm };
+    return { l: place(rig.hemL), r: place(rig.hemR) };
   }
 
-  private buildArm(
-    frame: PoseFrame,
-    geo: TorsoGeometry,
-    arm: ArmChain,
-    shoulderPt: Vec2,
-    bottomCorner: Vec2,
-    isLeft: boolean,
-  ): Skeleton {
-    const underarm = v.lerp(shoulderPt, bottomCorner, this.opts.underarmV);
-    const c0 = v.mid(shoulderPt, underarm);
-    const rootHalf = Math.max(6, v.dist(shoulderPt, underarm) / 2);
-    const rootNormal = v.normalize(v.sub(underarm, shoulderPt));
+  private trackArm(
+    idx: 0 | 1,
+    lm: LandmarkPx[],
+    body: BodyKeypoints,
+    chain: ArmChainIdx,
+    side: -1 | 1,
+    now: number,
+  ): { state: ArmTrackState; chain: Vec2[] } {
+    const arm = this.arms[idx];
+    const joint = side < 0 ? body.jointL : body.jointR;
+    const toRel = (p: Vec2): Vec2 => {
+      const d = v.sub(p, joint);
+      return { x: v.dot(d, body.axis) / body.span, y: v.dot(d, body.torsoDir) / body.span };
+    };
+    const fromRel = (r: Vec2): Vec2 =>
+      v.add(joint, v.add(v.scale(body.axis, r.x * body.span), v.scale(body.torsoDir, r.y * body.span)));
 
-    const lenRatio = isLeft ? this.prop.leftSleeveLenRatio : this.prop.rightSleeveLenRatio;
-    const tipRatio = isLeft ? this.prop.leftSleeveTipRatio : this.prop.rightSleeveTipRatio;
-    const sleeveLen = lenRatio * geo.scaleUnit;
-    if (sleeveLen < 10) {
-      // Sleeveless/tank: collapse the sleeve mesh to the armhole (renders nothing).
-      return { pointAt: () => c0 };
+    const update = (j: JointTrack, raw: number) => {
+      j.rel += (raw - j.rel) * 0.45;
+      j.on = j.on ? j.rel > 0.35 : j.rel > 0.55;
+    };
+    update(arm.elbow, lm[chain.elbow]!.visibility);
+    update(arm.wrist, lm[chain.wrist]!.visibility);
+
+    const restElbow: Vec2 = { x: side * 0.1, y: BODY.upperArm * 0.98 };
+    const restForearm: Vec2 = v.normalize({ x: side * 0.08, y: 1 });
+    const decay = (t0: number) => 1 - Math.exp(-Math.max(0, now - t0) / this.opts.armDecayMs);
+
+    // Elbow: tracked, else inferred from a visible wrist (two-bone IK), else held/rest.
+    let elbowRel: Vec2;
+    if (arm.elbow.on) {
+      elbowRel = toRel(lm[chain.elbow]!);
+      arm.elbow.lastGood = elbowRel;
+      arm.elbow.lastGoodT = now;
+    } else if (arm.wrist.on) {
+      elbowRel = ikElbow(toRel(lm[chain.wrist]!), BODY.upperArm, BODY.forearm, side);
+      arm.elbow.lastGood = elbowRel;
+      arm.elbow.lastGoodT = now;
+    } else {
+      const held = arm.elbow.lastGood ?? restElbow;
+      elbowRel = v.lerp(held, restElbow, arm.elbow.lastGood ? decay(arm.elbow.lastGoodT) : 1);
     }
-    const tipHalf = v.clamp((tipRatio * geo.scaleUnit) / 2, 3, rootHalf);
 
-    // Arm direction: real joints when visible, blended toward a natural resting
-    // hang (down + slightly outward) when not — so the sleeve never vanishes.
-    const outward = isLeft ? v.scale(geo.shoulderAxis, -1) : geo.shoulderAxis;
-    const restDir = v.normalize(v.add(geo.torsoDir, v.scale(outward, 0.35)));
-    const armLen = Math.max(sleeveLen, geo.torsoLen * 0.9);
-    const restElbow = v.add(c0, v.scale(restDir, armLen * 0.5));
-    const restWrist = v.add(c0, v.scale(restDir, armLen));
+    // Forearm direction.
+    const upperDir = v.normalize(elbowRel);
+    const naturalForearm = v.normalize(v.lerp(upperDir, restForearm, 0.5));
+    let forearmDir: Vec2;
+    let wristRel: Vec2;
+    if (arm.wrist.on) {
+      wristRel = toRel(lm[chain.wrist]!);
+      const d = v.sub(wristRel, elbowRel);
+      forearmDir = v.len(d) > 1e-3 ? v.normalize(d) : naturalForearm;
+      arm.forearmDir = forearmDir;
+      arm.wrist.lastGoodT = now;
+    } else {
+      const held = arm.forearmDir ?? naturalForearm;
+      forearmDir = v.normalize(v.lerp(held, naturalForearm, arm.forearmDir ? decay(arm.wrist.lastGoodT) : 1));
+      wristRel = v.add(elbowRel, v.scale(forearmDir, BODY.forearm));
+    }
 
-    const elbowVis = frame.normalized[arm.elbowIdx]?.visibility ?? 0;
-    const wristVis = frame.normalized[arm.wristIdx]?.visibility ?? 0;
-    const wArm = smooth01(
-      this.opts.armVisibility - 0.2,
-      this.opts.armVisibility + 0.1,
-      Math.min(elbowVis, wristVis),
+    const state: ArmTrackState =
+      arm.elbow.on && arm.wrist.on
+        ? 'tracked'
+        : arm.elbow.on || arm.wrist.on
+          ? 'partial'
+          : arm.elbow.lastGood && now - arm.elbow.lastGoodT < 2.5 * this.opts.armDecayMs
+            ? 'held'
+            : 'rest';
+    return { state, chain: [joint, fromRel(elbowRel), fromRel(wristRel)] };
+  }
+
+  private sleeveTube(
+    src: SleeveSource | null,
+    side: 'L' | 'R',
+    body: BodyKeypoints,
+    chain: Vec2[],
+    scale: number,
+    flat: boolean,
+  ) {
+    if (!src) return null;
+    const tip = side === 'L' ? body.shoulderL : body.shoulderR;
+    const pit = side === 'L' ? body.armpitL : body.armpitR;
+    const root = v.mid(tip, pit);
+    const widthK = flat ? FLAT_TO_WORN : 1;
+    const span = body.span;
+    const length = Math.max(4, src.tube.length * scale);
+    const axis = fitPolylineLength([root, chain[1]!, chain[2]!], length);
+    const reachesForearm = length > BODY.upperArm * span * 1.05;
+    return makeTube(
+      axis,
+      {
+        root: v.dist(tip, pit) / 2,
+        mid: Math.max(src.rig.rootHalfWidth * scale * widthK, 0.15 * span),
+        tip: Math.max(src.rig.tipHalfWidth * scale * widthK, (reachesForearm ? 0.1 : 0.13) * span),
+      },
+      side,
+      v.sub(pit, tip),
+      src.cap,
     );
-    const elbow = v.lerp(restElbow, frame.image[arm.elbowIdx] ?? restElbow, wArm);
-    const wrist = v.lerp(restWrist, frame.image[arm.wristIdx] ?? restWrist, wArm);
-
-    // Sleeve covers `sleeveLen` of arc length along shoulder→elbow→wrist.
-    const knots = truncatePolyline([c0, elbow, wrist], sleeveLen, restDir);
-    return makeSkeleton(knots, rootHalf, tipHalf, rootNormal);
   }
 
   dispose(): void {
     this.mesh = null;
+    this.rig = null;
     this.positions = new Float32Array(0);
     this.opacity = 0;
+    this.last = null;
   }
 }
 
-interface TorsoGeometry {
-  quad: Quad;
-  torsoDir: Vec2;
-  torsoLen: number;
-  scaleUnit: number;
-  shoulderAxis: Vec2;
-  leftArm: ArmChain;
-  rightArm: ArmChain;
+/**
+ * Two-bone IK in body-relative coordinates (shoulder joint at the origin, y =
+ * down the torso). Of the two elbow solutions, picks the lower one (elbows
+ * hang), breaking ties outward.
+ */
+function ikElbow(wrist: Vec2, upper: number, fore: number, side: -1 | 1): Vec2 {
+  const dRaw = v.len(wrist);
+  if (dRaw < 1e-6) return { x: side * 0.1, y: upper };
+  const d = v.clamp(dRaw, Math.abs(upper - fore) + 1e-3, upper + fore - 1e-3);
+  const dir = v.scale(wrist, 1 / dRaw);
+  const cosA = v.clamp((upper * upper + d * d - fore * fore) / (2 * upper * d), -1, 1);
+  const a = Math.acos(cosA);
+  const rot = (ang: number): Vec2 => ({
+    x: (dir.x * Math.cos(ang) - dir.y * Math.sin(ang)) * upper,
+    y: (dir.x * Math.sin(ang) + dir.y * Math.cos(ang)) * upper,
+  });
+  const e1 = rot(a);
+  const e2 = rot(-a);
+  if (Math.abs(e1.y - e2.y) > 1e-3) return e1.y > e2.y ? e1 : e2;
+  return e1.x * side > e2.x * side ? e1 : e2;
 }
 
-function flatProportions(): GarmentProportions {
-  return {
-    hemWidthRatio: 1,
-    torsoLenRatio: 1.4,
-    leftSleeveLenRatio: 0.9,
-    rightSleeveLenRatio: 0.9,
-    leftSleeveTipRatio: 0.5,
-    rightSleeveTipRatio: 0.5,
-  };
-}
-
-function computeProportions(layout: GarmentLayout): GarmentProportions {
-  const t = layout.torso;
-  const shoulderW = Math.max(1, v.dist(t.tl, t.tr));
-  const hemW = v.dist(t.bl, t.br);
-  const torsoLen = (v.dist(t.tl, t.bl) + v.dist(t.tr, t.br)) / 2;
-
-  const sleeve = (s: GarmentLayout['leftSleeve']) => {
-    const rootMid = v.mid(s.rootTop, s.rootBottom);
-    const tipMid = v.mid(s.tipTop, s.tipBottom);
-    return {
-      lenRatio: v.dist(rootMid, tipMid) / shoulderW,
-      tipRatio: v.dist(s.tipTop, s.tipBottom) / shoulderW,
-    };
-  };
-  const l = sleeve(layout.leftSleeve);
-  const r = sleeve(layout.rightSleeve);
-
-  return {
-    hemWidthRatio: v.clamp(hemW / shoulderW, 0.55, 1.6),
-    torsoLenRatio: v.clamp(torsoLen / shoulderW, 0.8, 2.8),
-    leftSleeveLenRatio: v.clamp(l.lenRatio, 0, 1.6),
-    rightSleeveLenRatio: v.clamp(r.lenRatio, 0, 1.6),
-    leftSleeveTipRatio: v.clamp(l.tipRatio, 0, 1.2),
-    rightSleeveTipRatio: v.clamp(r.tipRatio, 0, 1.2),
-  };
-}
-
-/** Truncate (or extend) a polyline to a target arc length, returning its knots. */
-function truncatePolyline(poly: Vec2[], length: number, fallbackDir: Vec2): Vec2[] {
-  if (length <= 1 || poly.length < 2) return [poly[0]!, poly[0]!];
-  const out: Vec2[] = [poly[0]!];
-  let remaining = length;
-  for (let i = 0; i < poly.length - 1; i++) {
-    const a = poly[i]!;
-    const b = poly[i + 1]!;
-    const seg = v.dist(a, b);
-    if (seg <= remaining + 1e-3) {
-      out.push(b);
-      remaining -= seg;
-    } else {
-      out.push(v.add(a, v.scale(v.normalize(v.sub(b, a)), remaining)));
-      remaining = 0;
-      break;
-    }
-  }
-  if (remaining > 1 && out.length >= 1) {
-    const last = out[out.length - 1]!;
-    const prev = out.length >= 2 ? out[out.length - 2]! : v.sub(last, fallbackDir);
-    let dir = v.sub(last, prev);
-    dir = v.len(dir) > 1e-3 ? v.normalize(dir) : fallbackDir;
-    out[out.length - 1] = v.add(last, v.scale(dir, remaining));
-  }
-  return out;
-}
-
-function makeSkeleton(knots: Vec2[], rootHalf: number, cuffHalf: number, rootNormal: Vec2): Skeleton {
-  const segs: { a: Vec2; dir: Vec2; len: number }[] = [];
-  let total = 0;
-  for (let i = 0; i < knots.length - 1; i++) {
-    const a = knots[i]!;
-    const b = knots[i + 1]!;
-    const len = Math.max(1e-3, v.dist(a, b));
-    segs.push({ a, dir: v.scale(v.sub(b, a), 1 / len), len });
-    total += len;
-  }
-  if (segs.length === 0) {
-    const p = knots[0] ?? { x: 0, y: 0 };
-    return { pointAt: () => p };
-  }
-  return {
-    pointAt(t, s) {
-      const d = v.clamp(t, 0, 1) * total;
-      let acc = 0;
-      let seg = segs[segs.length - 1]!;
-      let local = d - (total - seg.len);
-      for (const sg of segs) {
-        if (d <= acc + sg.len) {
-          seg = sg;
-          local = d - acc;
-          break;
-        }
-        acc += sg.len;
-      }
-      const center = v.add(seg.a, v.scale(seg.dir, local));
-      let normal = v.perp(seg.dir);
-      if (v.dot(normal, rootNormal) < 0) normal = v.scale(normal, -1);
-      const half = rootHalf + (cuffHalf - rootHalf) * t;
-      return v.add(center, v.scale(normal, s * half));
-    },
-  };
-}
-
-function bilinear(q: Quad, u: number, vv: number): Vec2 {
-  const topx = q.tl.x + (q.tr.x - q.tl.x) * u;
-  const topy = q.tl.y + (q.tr.y - q.tl.y) * u;
-  const botx = q.bl.x + (q.br.x - q.bl.x) * u;
-  const boty = q.bl.y + (q.br.y - q.bl.y) * u;
-  return { x: topx + (botx - topx) * vv, y: topy + (boty - topy) * vv };
+function inFrame(x: number, y: number): number {
+  const m = 0.02;
+  const e = Math.min(x, 1 - x, y, 1 - y);
+  return v.clamp((e + m) / (2 * m), 0, 1);
 }
 
 function smooth01(a: number, b: number, x: number): number {

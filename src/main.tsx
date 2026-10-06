@@ -25,6 +25,12 @@ if (params.has('selftest')) {
   void import('./dev/visualtest').then(({ runVisualTest }) =>
     runVisualTest(imageUrl, canvas, garmentId, cropFrac),
   );
+} else if (params.has('replay')) {
+  // Dev/e2e path: replay a real recorded video through the live pipeline.
+  const canvas = document.createElement('canvas');
+  canvas.id = 'visual-canvas';
+  rootEl.appendChild(canvas);
+  void import('./dev/replaytest').then(({ installReplay }) => installReplay(canvas));
 } else if (params.has('mlprep')) {
   // Dev/e2e path: ML garment extraction, cutout drawn over a checkerboard.
   const imageUrl = params.get('img') ?? '/test/person.jpg';

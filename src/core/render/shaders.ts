@@ -42,16 +42,24 @@ void main() {
   vAlpha = aAlpha;
 }`;
 
+// Garment pass. The garment texture is PREMULTIPLIED (clean anti-aliased edges,
+// no background-colour halos). A region map selects which texels this mesh part
+// owns (torso vs left/right sleeve) so sleeve fabric is never dragged by the
+// torso warp. Lighting is exposure-only (whole-frame average luminance): it
+// never samples the pixels under the garment, so the user's own clothes can't
+// show through.
 export const GARMENT_FS = /* glsl */ `#version 300 es
 precision highp float;
 in vec2 vUV;
 in float vAlpha;
 uniform sampler2D uGarment;
+uniform sampler2D uRegion;
 uniform sampler2D uSeg;
 uniform sampler2D uVideo;
 uniform vec2 uRes;
 uniform vec2 uSegRes;
 uniform float uOpacity;
+uniform int uPart;
 uniform int uHasSeg;
 uniform int uOccSil;
 uniform int uOccHairFace;
@@ -63,11 +71,19 @@ float catAt(vec2 uv) {
 }
 
 void main() {
-  vec4 g = texture(uGarment, vec2(vUV.x, 1.0 - vUV.y));
+  vec2 tuv = vec2(vUV.x, 1.0 - vUV.y);
+  vec4 reg = texture(uRegion, tuv);
+  bool inL = reg.r > 0.5;
+  bool inR = reg.g > 0.5;
+  if (uPart == 0 && (inL || inR)) discard;
+  if (uPart == 1 && !inL) discard;
+  if (uPart == 2 && !inR) discard;
+
+  vec4 g = texture(uGarment, tuv);
   float a = g.a * vAlpha * uOpacity;
   if (a <= 0.002) discard;
 
-  vec3 rgb = g.rgb;
+  vec3 rgb = g.a > 0.0 ? g.rgb / g.a : vec3(0.0);
   vec2 suv = vec2(gl_FragCoord.x / uRes.x, 1.0 - gl_FragCoord.y / uRes.y);
   vec2 segUV = vec2(1.0 - suv.x, 1.0 - suv.y);
 
@@ -89,18 +105,14 @@ void main() {
   }
   if (a <= 0.002) discard;
 
-  // Mild light harmonization: nudge garment luminance toward the scene behind it.
+  // Exposure match: whole-frame average luminance from the top video mip level.
   if (uHarmonize == 1) {
-    vec3 bg = texture(uVideo, vec2(1.0 - suv.x, 1.0 - suv.y)).rgb;
-    float sceneL = dot(bg, vec3(0.299, 0.587, 0.114));
-    float gL = dot(rgb, vec3(0.299, 0.587, 0.114));
-    if (gL > 0.02) {
-      float targetL = mix(gL, clamp(sceneL, gL * 0.65, gL * 1.5), 0.3);
-      rgb *= targetL / gL;
-    }
+    vec3 avg = textureLod(uVideo, vec2(0.5), 14.0).rgb;
+    float sceneL = dot(avg, vec3(0.299, 0.587, 0.114));
+    rgb *= mix(1.0, clamp(sceneL / 0.45, 0.7, 1.1), 0.6);
   }
 
-  outColor = vec4(rgb, a);
+  outColor = vec4(rgb * a, a); // premultiplied
 }`;
 
 // Re-paints the real forearms (camera skin pixels) over the garment where a

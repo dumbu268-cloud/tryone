@@ -15,7 +15,9 @@
     "test:e2e": "playwright test",
     "setup": "node scripts/setup-models.mjs && node scripts/copy-wasm.mjs",
     "setup:models": "node scripts/setup-models.mjs",
-    "postinstall": "node scripts/copy-wasm.mjs"
+    "postinstall": "node scripts/copy-wasm.mjs",
+    "setup:test-media": "node scripts/fetch-test-media.mjs",
+    "test:replay": "playwright test replay"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.21",

@@ -53,7 +53,7 @@ export async function runVisualTest(
     for (let i = 1; i < 4; i++) frame = perception.detectOn(source, w, sh, 1000 + i * 40);
 
     let fit = engine.fit(frame);
-    for (let i = 1; i < 45; i++) fit = engine.fit(frame);
+    for (let i = 1; i < 45; i++) fit = engine.fit({ ...frame, timestamp: frame.timestamp + i * 33 });
 
     renderer.render({
       source,

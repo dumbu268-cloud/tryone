@@ -21,16 +21,16 @@
   </defs>
 
   <!-- Sleeves (drawn first so the torso overlaps the armhole seam) -->
-  <polygon points="185,120 40,150 55,250 185,235" fill="url(#lsSleeveL)" />
-  <polygon points="335,120 480,150 465,250 335,235" fill="url(#lsSleeveR)" />
+  <polygon points="185,120 41,317 81,349 185,235" fill="url(#lsSleeveL)" />
+  <polygon points="335,120 479,317 439,349 335,235" fill="url(#lsSleeveR)" />
   <!-- Cuff ribbing -->
-  <line x1="40" y1="150" x2="55" y2="250" stroke="#2b4e43" stroke-width="7" stroke-linecap="round" />
-  <line x1="480" y1="150" x2="465" y2="250" stroke="#2b4e43" stroke-width="7" stroke-linecap="round" />
+  <line x1="41" y1="317" x2="81" y2="349" stroke="#2b4e43" stroke-width="7" stroke-linecap="round" />
+  <line x1="479" y1="317" x2="439" y2="349" stroke="#2b4e43" stroke-width="7" stroke-linecap="round" />
 
   <!-- Torso -->
-  <path d="M185,120 L245,120 Q260,148 275,120 L335,120 L335,440 Q260,452 185,440 Z"
+  <path d="M185,120 L245,120 Q260,148 275,120 L335,120 L335,345 Q260,357 185,345 Z"
         fill="url(#lsFabric)" />
-  <path d="M185,120 L245,120 Q260,148 275,120 L335,120 L335,440 Q260,452 185,440 Z"
+  <path d="M185,120 L245,120 Q260,148 275,120 L335,120 L335,345 Q260,357 185,345 Z"
         fill="url(#lsVolume)" />
 
   <!-- Collar -->
@@ -40,6 +40,6 @@
         stroke-linecap="round" opacity="0.8" />
 
   <!-- Soft side shading -->
-  <path d="M185,120 L185,440" fill="none" stroke="#000000" stroke-width="10" opacity="0.06" />
-  <path d="M335,120 L335,440" fill="none" stroke="#000000" stroke-width="10" opacity="0.06" />
+  <path d="M185,120 L185,345" fill="none" stroke="#000000" stroke-width="10" opacity="0.06" />
+  <path d="M335,120 L335,345" fill="none" stroke="#000000" stroke-width="10" opacity="0.06" />
 </svg>

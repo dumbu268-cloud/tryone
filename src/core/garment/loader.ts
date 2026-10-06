@@ -43,14 +43,9 @@ async function rasterize(
   ctx.clearRect(0, 0, width, height);
   ctx.drawImage(img, 0, 0, width, height);
 
-  // Prefer an ImageBitmap (cheaper to upload); fall back to the canvas itself.
-  if (typeof createImageBitmap === 'function') {
-    try {
-      return await createImageBitmap(canvas);
-    } catch {
-      /* fall through */
-    }
-  }
+  // Return the canvas, NOT an ImageBitmap: WebGL ignores UNPACK_FLIP_Y /
+  // UNPACK_PREMULTIPLY_ALPHA for ImageBitmap sources, which rendered built-in
+  // garments vertically flipped (collar at the hem).
   return canvas;
 }
 

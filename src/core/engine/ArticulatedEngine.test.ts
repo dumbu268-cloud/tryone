@@ -1,280 +1,217 @@
 import { describe, it, expect } from 'vitest';
 import { ArticulatedEngine } from './ArticulatedEngine';
 import { buildGarmentMesh } from '@/core/garment/mesh';
-import { LONG_SLEEVE } from '@/core/garment/catalog';
-import { PoseLandmark } from '@/core/perception/landmarks';
-import type { GarmentAsset, GarmentLayout, Landmark, PoseFrame, Quad, Vec2 } from '@/core/types';
+import { LONG_SLEEVE, TEE } from '@/core/garment/catalog';
+import { PoseLandmark as P } from '@/core/perception/landmarks';
+import type { GarmentAsset, GarmentDescriptor, GarmentRig, Landmark, PoseFrame, Vec2 } from '@/core/types';
 
-const garment: GarmentAsset = {
-  id: LONG_SLEEVE.id,
-  name: LONG_SLEEVE.name,
-  type: LONG_SLEEVE.type,
-  textureWidth: LONG_SLEEVE.textureWidth,
-  textureHeight: LONG_SLEEVE.textureHeight,
+const asset = (d: GarmentDescriptor): GarmentAsset => ({
+  id: d.id,
+  name: d.name,
+  type: d.type,
+  textureWidth: d.textureWidth,
+  textureHeight: d.textureHeight,
   image: {} as unknown as TexImageSource,
-  anchors: LONG_SLEEVE.anchors,
-  layout: LONG_SLEEVE.layout,
-  zOrder: LONG_SLEEVE.zOrder,
+  anchors: d.anchors,
+  layout: d.layout,
+  zOrder: d.zOrder,
+});
+const LONG = asset(LONG_SLEEVE);
+const SHORT = asset(TEE);
+
+type Lm = Partial<Record<number, [number, number, number?]>>; // x, y, visibility
+
+/** Upright user, 1000×1000 frame, shoulders 200px apart at y=300. */
+function frame(over: Lm = {}, t = 0, valid = true): PoseFrame {
+  const base: Lm = {
+    0: [500, 150],
+    9: [485, 205],
+    10: [515, 205],
+    [P.LEFT_SHOULDER]: [400, 300],
+    [P.RIGHT_SHOULDER]: [600, 300],
+    [P.LEFT_ELBOW]: [385, 470],
+    [P.RIGHT_ELBOW]: [615, 470],
+    [P.LEFT_WRIST]: [380, 620],
+    [P.RIGHT_WRIST]: [620, 620],
+    [P.LEFT_HIP]: [440, 640],
+    [P.RIGHT_HIP]: [560, 640],
+  };
+  const image: Vec2[] = Array.from({ length: 33 }, () => ({ x: 500, y: 500 }));
+  const normalized: Landmark[] = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 1 }));
+  for (const [k, val] of Object.entries({ ...base, ...over })) {
+    const [x, y, vis] = val!;
+    image[+k] = { x, y };
+    normalized[+k] = { x: x / 1000, y: y / 1000, z: 0, visibility: vis ?? 1 };
+  }
+  return { timestamp: t, width: 1000, height: 1000, valid, confidence: 1, image, normalized };
+}
+
+function run(e: ArticulatedEngine, f: (i: number) => PoseFrame, n = 30) {
+  let fit = e.fit(f(0));
+  for (let i = 1; i < n; i++) fit = e.fit(f(i));
+  return fit;
+}
+
+const regionVerts = (g: GarmentAsset, reg: number) => {
+  const m = buildGarmentMesh(g);
+  return [...m.region.keys()].filter((i) => m.region[i] === reg);
+};
+const at = (pos: Float32Array, i: number): Vec2 => ({ x: pos[i * 2]!, y: pos[i * 2 + 1]! });
+const centroid = (pos: Float32Array, idx: number[]) => {
+  let x = 0;
+  let y = 0;
+  for (const i of idx) {
+    x += pos[i * 2]!;
+    y += pos[i * 2 + 1]!;
+  }
+  return { x: x / idx.length, y: y / idx.length };
 };
 
-const mesh = buildGarmentMesh(garment);
-
-/** Index of the left-sleeve cuff-centre vertex (region 1, t≈1, s≈0). */
-function leftCuffCentreVertex(): number {
-  let best = -1;
-  let bestScore = -Infinity;
-  for (let i = 0; i < mesh.vertexCount; i++) {
-    if (mesh.region[i] !== 1) continue;
-    const score = mesh.paramA[i]! - Math.abs(mesh.paramB[i]!);
-    if (score > bestScore) {
-      bestScore = score;
-      best = i;
-    }
-  }
-  return best;
-}
-
-type Lm = Record<number, [number, number]>;
-
-function makeFrame(positions: Lm, hidden: number[] = []): PoseFrame {
-  const image: Vec2[] = Array.from({ length: 33 }, () => ({ x: 0, y: 0 }));
-  const normalized: Landmark[] = Array.from({ length: 33 }, () => ({
-    x: 0,
-    y: 0,
-    z: 0,
-    visibility: 1,
-  }));
-  const base: Lm = {
-    [PoseLandmark.LEFT_SHOULDER]: [400, 300],
-    [PoseLandmark.RIGHT_SHOULDER]: [600, 300],
-    [PoseLandmark.LEFT_ELBOW]: [385, 450],
-    [PoseLandmark.RIGHT_ELBOW]: [615, 450],
-    [PoseLandmark.LEFT_WRIST]: [375, 590],
-    [PoseLandmark.RIGHT_WRIST]: [625, 590],
-    [PoseLandmark.LEFT_HIP]: [430, 620],
-    [PoseLandmark.RIGHT_HIP]: [570, 620],
-  };
-  const merged = { ...base, ...positions };
-  for (const key of Object.keys(merged)) {
-    const idx = Number(key);
-    const [x, y] = merged[idx]!;
-    image[idx] = { x, y };
-    normalized[idx] = { x: x / 1000, y: y / 1000, z: 0, visibility: 1 };
-  }
-  for (const idx of hidden) normalized[idx] = { ...normalized[idx]!, visibility: 0 };
-  return { timestamp: 0, width: 1000, height: 1000, valid: true, confidence: 1, image, normalized };
-}
-
-function vertexPos(positions: Float32Array, idx: number): Vec2 {
-  return { x: positions[idx * 2]!, y: positions[idx * 2 + 1]! };
-}
-
-function degenerateSleeve(x: number, y: number): GarmentLayout['leftSleeve'] {
-  const p = { x, y };
-  return { rootTop: p, rootBottom: p, tipTop: p, tipBottom: p };
-}
-
-function makeGarment(layout: GarmentLayout): GarmentAsset {
-  return {
-    id: 'test',
-    name: 'test',
-    type: 'tshirt',
-    textureWidth: 256,
-    textureHeight: 600,
-    image: {} as unknown as TexImageSource,
-    anchors: {
-      neck: { x: 100, y: 10 },
-      leftShoulder: layout.torso.tl,
-      rightShoulder: layout.torso.tr,
-      leftHem: layout.torso.bl,
-      rightHem: layout.torso.br,
-    },
-    layout,
-    zOrder: 10,
-  };
-}
-
-function settleQuad(engine: ArticulatedEngine, frame: PoseFrame): Quad {
-  let fit = engine.fit(frame);
-  for (let i = 0; i < 40; i++) fit = engine.fit(frame);
-  return fit.quad;
-}
-
-describe('ArticulatedEngine', () => {
-  it('produces a full, finite mesh for an upright pose', () => {
+describe('ArticulatedEngine (rig + TPS)', () => {
+  it('produces a full, finite mesh', () => {
     const e = new ArticulatedEngine();
-    e.prepare(garment);
-    const fit = e.fit(makeFrame({}));
+    e.prepare(LONG);
+    const fit = run(e, (i) => frame({}, i * 33));
     expect(fit.visible).toBe(true);
-    expect(fit.positions).toBeDefined();
-    expect(fit.positions!.length).toBe(mesh.vertexCount * 2);
     for (const n of fit.positions!) expect(Number.isFinite(n)).toBe(true);
   });
 
-  it('left sleeve cuff follows the left wrist when the arm is raised sideways', () => {
+  it('places the collar ABOVE the shoulder joints (neck is modelled)', () => {
     const e = new ArticulatedEngine();
-    e.prepare(garment);
-    const cuff = leftCuffCentreVertex();
-    expect(cuff).toBeGreaterThanOrEqual(0);
-
-    const armDown = e.fit(makeFrame({})).positions!;
-    const downCuff = vertexPos(armDown, cuff);
-
-    // Raise the (screen-left) arm out horizontally to the left.
-    const raised = e.fit(
-      makeFrame({
-        [PoseLandmark.LEFT_ELBOW]: [300, 300],
-        [PoseLandmark.LEFT_WRIST]: [180, 300],
-      }),
-    ).positions!;
-    const raisedCuff = vertexPos(raised, cuff);
-
-    // The cuff should move far to the left (toward the wrist) and up to ~shoulder height.
-    expect(raisedCuff.x).toBeLessThan(downCuff.x - 120);
-    expect(raisedCuff.y).toBeLessThan(downCuff.y - 120);
-    // And land in the neighbourhood of the actual wrist.
-    expect(Math.abs(raisedCuff.x - 180)).toBeLessThan(90);
-    expect(Math.abs(raisedCuff.y - 300)).toBeLessThan(90);
+    e.prepare(LONG);
+    const fit = run(e, (i) => frame({}, i * 33));
+    const [neckL, neckR] = fit.debug!.keypoints;
+    expect(neckL!.y).toBeLessThan(300 - 25);
+    expect(neckR!.y).toBeLessThan(300 - 25);
+    expect(neckL!.x).toBeGreaterThan(400);
+    expect(neckR!.x).toBeLessThan(600);
   });
 
-  it('elbow bend puts the cuff near the wrist (two-bone chain)', () => {
-    const e = new ArticulatedEngine();
-    e.prepare(garment);
-    const cuff = leftCuffCentreVertex();
-    // Elbow out to the side, forearm bent downward.
-    const bent = e.fit(
-      makeFrame({
-        [PoseLandmark.LEFT_ELBOW]: [300, 330],
-        [PoseLandmark.LEFT_WRIST]: [340, 500],
-      }),
-    ).positions!;
-    const c = vertexPos(bent, cuff);
-    expect(Math.abs(c.x - 340)).toBeLessThan(110);
-    expect(Math.abs(c.y - 500)).toBeLessThan(120);
-  });
-
-  it('falls back to a stable hanging sleeve when the arm is untracked', () => {
-    const e = new ArticulatedEngine();
-    e.prepare(garment);
-    const cuff = leftCuffCentreVertex();
-    const fit = e.fit(
-      makeFrame(
-        { [PoseLandmark.LEFT_ELBOW]: [9999, 9999], [PoseLandmark.LEFT_WRIST]: [9999, 9999] },
-        [PoseLandmark.LEFT_ELBOW, PoseLandmark.LEFT_WRIST],
-      ),
+  it('torso fit is independent of arm landmarks', () => {
+    const torso = regionVerts(LONG, 0);
+    const a = new ArticulatedEngine();
+    a.prepare(LONG);
+    const fa = run(a, (i) => frame({}, i * 33));
+    const b = new ArticulatedEngine();
+    b.prepare(LONG);
+    const fb = run(b, (i) =>
+      frame({ [P.LEFT_ELBOW]: [250, 250], [P.LEFT_WRIST]: [150, 120], [P.RIGHT_WRIST]: [0, 0, 0] }, i * 33),
     );
-    const c = vertexPos(fit.positions!, cuff);
-    // Not driven to the bogus (9999) coordinates; hangs below the shoulder.
-    expect(Number.isFinite(c.x)).toBe(true);
-    expect(c.x).toBeLessThan(1000);
-    expect(c.y).toBeGreaterThan(300);
+    for (const i of torso.slice(0, 60)) {
+      expect(at(fa.positions!, i).x).toBeCloseTo(at(fb.positions!, i).x, 6);
+      expect(at(fb.positions!, i).y).toBeCloseTo(at(fa.positions!, i).y, 6);
+    }
   });
 
-  it('synthesizes a full torso when the hips are not visible (seated/cropped framing)', () => {
+  it("upper sleeve follows the elbow even when the wrist is out of frame", () => {
+    const m = buildGarmentMesh(SHORT);
+    let cuff = -1;
+    for (let i = 0; i < m.vertexCount; i++)
+      if (m.region[i] === 1 && (cuff < 0 || m.paramA[i]! - Math.abs(m.paramB[i]!) > m.paramA[cuff]! - Math.abs(m.paramB[cuff]!))) cuff = i;
+    const left = [cuff];
     const e = new ArticulatedEngine();
-    e.prepare(garment);
-
-    // Hips hidden; their image coords are a bad high guess near the chest.
-    const cropped = e.fit(
-      makeFrame(
-        { [PoseLandmark.LEFT_HIP]: [470, 360], [PoseLandmark.RIGHT_HIP]: [530, 360] },
-        [PoseLandmark.LEFT_HIP, PoseLandmark.RIGHT_HIP],
-      ),
-    );
-    // Shoulders at y=300, width 200 => synthesized torso extends well below the chest,
-    // not collapsing onto the bad hip guess at y=360.
-    expect(cropped.quad.bl.y).toBeGreaterThan(600);
-    // Torso stays a sensible width (near the shoulder span), not a narrow bib.
-    expect(cropped.quad.tr.x - cropped.quad.tl.x).toBeGreaterThan(180);
+    e.prepare(SHORT);
+    const offscreenWrists = { [P.LEFT_WRIST]: [380, 1100], [P.RIGHT_WRIST]: [620, 1100] } as Lm;
+    const down = run(e, (i) => frame({ ...offscreenWrists }, i * 33));
+    expect(down.debug!.arms[0]!.state).toBe('partial');
+    const c0 = centroid(down.positions!, left);
+    const raised = run(e, (i) => frame({ ...offscreenWrists, [P.LEFT_ELBOW]: [230, 300] }, 2000 + i * 33));
+    const c1 = centroid(raised.positions!, left);
+    expect(raised.debug!.arms[0]!.state).toBe('partial');
+    expect(c1.x).toBeLessThan(c0.x - 50); // cuff moved out with the elbow
+    expect(c1.y).toBeLessThan(c0.y - 50); // and up
   });
 
-  it('extends a too-short torso to a realistic length (close/seated framing)', () => {
+  it('holds the last arm pose on landmark loss, then eases to rest (never vanishes)', () => {
     const e = new ArticulatedEngine();
-    e.prepare(garment);
-    // Hips VISIBLE but detected high near the chest (person close to camera).
-    const fit = e.fit(
-      makeFrame({
-        [PoseLandmark.LEFT_HIP]: [470, 360],
-        [PoseLandmark.RIGHT_HIP]: [530, 360],
-      }),
-    );
-    // Shoulders span 200 at y=300 → torso clamped to ≥1.5×width, hem well below.
-    expect(fit.quad.bl.y).toBeGreaterThan(600);
-    expect(fit.quad.tr.x - fit.quad.tl.x).toBeGreaterThan(180);
+    e.prepare(LONG);
+    run(e, (i) => frame({ [P.LEFT_ELBOW]: [230, 300], [P.LEFT_WRIST]: [100, 300] }, i * 33));
+    const lost = { [P.LEFT_ELBOW]: [230, 300, 0], [P.LEFT_WRIST]: [100, 300, 0] } as Lm;
+    const soon = e.fit(frame(lost, 30 * 33 + 50));
+    const soonFit = e.fit(frame(lost, 30 * 33 + 100));
+    expect(['held', 'tracked', 'partial']).toContain(soonFit.debug!.arms[0]!.state);
+    void soon;
+    const heldElbow = soonFit.debug!.arms[0]!.chain[1]!;
+    expect(heldElbow.x).toBeLessThan(330); // still near the last good (raised) elbow
+
+    const later = run(e, (i) => frame(lost, 5000 + i * 100), 40);
+    expect(later.debug!.arms[0]!.state).toBe('rest');
+    const restElbow = later.debug!.arms[0]!.chain[1]!;
+    expect(restElbow.y).toBeGreaterThan(400); // hanging down at the side
+    expect(later.leftSleeveOpacity ?? 1).toBe(1);
+    expect(later.visible).toBe(true);
+  });
+
+  it('infers the elbow from a visible wrist when the elbow is out of frame (IK)', () => {
+    const e = new ArticulatedEngine();
+    e.prepare(LONG);
+    // Close framing, hand raised near the face, elbow below the frame.
+    const f = run(e, (i) => frame({ [P.LEFT_ELBOW]: [330, 1080, 0.2], [P.LEFT_WRIST]: [430, 190] }, i * 33));
+    const arm = f.debug!.arms[0]!;
+    expect(arm.state).toBe('partial');
+    const [shoulder, elbow, wrist] = arm.chain;
+    expect(Math.abs(wrist!.x - 430) + Math.abs(wrist!.y - 190)).toBeLessThan(1); // sleeve ends at the real hand
+    // Valid two-bone chain (upper arm ≈ 0.85 × 200px) with the elbow below the hand.
+    expect(Math.hypot(elbow!.x - shoulder!.x, elbow!.y - shoulder!.y)).toBeCloseTo(170, 0);
+    expect(elbow!.y).toBeGreaterThan(wrist!.y);
+  });
+
+  it('different garments produce different geometry on the same body', () => {
+    // Same shoulders/armpits; a cropped boxy top vs a long flared tunic.
+    const rigGarment = (hemDepth: number, hemHalf: number, sleeveLen: number): GarmentAsset => {
+      const rig: GarmentRig = {
+        neckL: { x: 170, y: 100 },
+        neckR: { x: 230, y: 100 },
+        shoulderL: { x: 100, y: 110 },
+        shoulderR: { x: 300, y: 110 },
+        armpitL: { x: 100, y: 200 },
+        armpitR: { x: 300, y: 200 },
+        hemL: { x: 200 - hemHalf, y: 110 + hemDepth },
+        hemR: { x: 200 + hemHalf, y: 110 + hemDepth },
+        sleeveL: sleeveLen ? { axis: [{ x: 100, y: 155 }, { x: 100 - sleeveLen, y: 175 }], rootHalfWidth: 40, tipHalfWidth: 25 } : null,
+        sleeveR: sleeveLen ? { axis: [{ x: 300, y: 155 }, { x: 300 + sleeveLen, y: 175 }], rootHalfWidth: 40, tipHalfWidth: 25 } : null,
+        source: 'silhouette',
+      };
+      return { ...LONG, id: `rig-${hemDepth}`, textureWidth: 700, textureHeight: 700, layout: { ...LONG.layout, rig } };
+    };
+    const measure = (g: GarmentAsset) => {
+      const e = new ArticulatedEngine();
+      e.prepare(g);
+      const f = run(e, (i) => frame({}, i * 33));
+      const k = f.debug!.keypoints;
+      const m = buildGarmentMesh(g);
+      return { hemY: (k[6]!.y + k[7]!.y) / 2, hemW: k[7]!.x - k[6]!.x, sleeveVerts: m.ranges.leftSleeve.count };
+    };
+    const crop = measure(rigGarment(130, 95, 0));
+    const tunic = measure(rigGarment(420, 140, 260));
+    expect(tunic.hemY - crop.hemY).toBeGreaterThan(150); // much longer
+    expect(tunic.hemW).toBeGreaterThan(crop.hemW * 1.3); // flared hem
+    expect(crop.sleeveVerts).toBe(0); // sleeveless
+    expect(tunic.sleeveVerts).toBeGreaterThan(0);
   });
 
   it('never renders upside down when hips are detected above the shoulders', () => {
     const e = new ArticulatedEngine();
-    e.prepare(garment);
-    // Reclining/tilted pose: hips (y=200) above shoulders (y=300).
-    const fit = e.fit(
-      makeFrame({
-        [PoseLandmark.LEFT_HIP]: [470, 200],
-        [PoseLandmark.RIGHT_HIP]: [530, 200],
-      }),
-    );
-    // Top edge must stay above the hem (not flipped).
+    e.prepare(LONG);
+    const fit = run(e, (i) => frame({ [P.LEFT_HIP]: [440, 150], [P.RIGHT_HIP]: [560, 150] }, i * 33));
     expect(fit.quad.tl.y).toBeLessThan(fit.quad.bl.y);
     expect(fit.quad.tr.y).toBeLessThan(fit.quad.br.y);
   });
 
-  it('keeps a stable resting sleeve (no vanish) when the arm is untracked', () => {
+  it('keeps the garment length when hips are out of frame (seated / close)', () => {
     const e = new ArticulatedEngine();
-    e.prepare(garment);
-    const cuff = leftCuffCentreVertex();
-    const fit = e.fit(makeFrame({}, [PoseLandmark.LEFT_ELBOW, PoseLandmark.LEFT_WRIST]));
-    // Garment stays fully visible; the sleeve rests downward beside the torso
-    // (not faded away, not driven to bogus coordinates).
-    expect(fit.visible).toBe(true);
-    const c = vertexPos(fit.positions!, cuff);
-    expect(Number.isFinite(c.x) && Number.isFinite(c.y)).toBe(true);
-    expect(c.y).toBeGreaterThan(300); // hangs below the shoulders
-    expect(c.x).toBeLessThan(1000);
+    e.prepare(LONG);
+    const fit = run(e, (i) => frame({ [P.LEFT_HIP]: [440, 1200, 0.2], [P.RIGHT_HIP]: [560, 1200, 0.2] }, i * 33));
+    expect(fit.quad.bl.y).toBeGreaterThan(560);
   });
 
-  it('produces visibly different geometry for garments with different proportions', () => {
-    // A short, wide garment vs a long, narrow one — same body frame.
-    const shortWide = makeGarment({
-      torso: { tl: { x: 0, y: 0 }, tr: { x: 200, y: 0 }, br: { x: 220, y: 160 }, bl: { x: -20, y: 160 } },
-      leftSleeve: degenerateSleeve(0, 0),
-      rightSleeve: degenerateSleeve(200, 0),
-      sleeveLength: 'short',
-      coversForearm: false,
-    });
-    const longNarrow = makeGarment({
-      torso: { tl: { x: 0, y: 0 }, tr: { x: 200, y: 0 }, br: { x: 180, y: 520 }, bl: { x: 20, y: 520 } },
-      leftSleeve: degenerateSleeve(0, 0),
-      rightSleeve: degenerateSleeve(200, 0),
-      sleeveLength: 'short',
-      coversForearm: false,
-    });
-
-    const frame = makeFrame({});
-    const a = new ArticulatedEngine();
-    a.prepare(shortWide);
-    const qa = settleQuad(a, frame);
-    const b = new ArticulatedEngine();
-    b.prepare(longNarrow);
-    const qb = settleQuad(b, frame);
-
-    const lenA = qa.bl.y - qa.tl.y;
-    const lenB = qb.bl.y - qb.tl.y;
-    const hemA = qa.br.x - qa.bl.x;
-    const hemB = qb.br.x - qb.bl.x;
-
-    // The long-narrow garment is substantially taller; the short-wide one has a wider hem.
-    expect(lenB).toBeGreaterThan(lenA * 1.8);
-    expect(hemA).toBeGreaterThan(hemB * 1.3);
-  });
-
-  it('fades out and hides when tracking is lost', () => {
+  it('holds the fit briefly when the person is lost, then fades out', () => {
     const e = new ArticulatedEngine();
-    e.prepare(garment);
-    e.fit(makeFrame({}));
-    const invalid: PoseFrame = { ...makeFrame({}), valid: false };
-    let fit = e.fit(invalid);
-    for (let i = 0; i < 60; i++) fit = e.fit(invalid);
-    expect(fit.visible).toBe(false);
-    expect(fit.opacity).toBeLessThan(0.05);
+    e.prepare(LONG);
+    run(e, (i) => frame({}, i * 33));
+    const held = e.fit(frame({}, 30 * 33 + 200, false));
+    expect(held.visible).toBe(true);
+    const gone = run(e, (i) => frame({}, 5000 + i * 100, false), 40);
+    expect(gone.visible).toBe(false);
   });
 });

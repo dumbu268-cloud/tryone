@@ -58,6 +58,7 @@ export class BodyPerception {
   private lastImage: Vec2[] = [];
   private lastNormalized: Landmark[] = [];
   private lastSeg: SegmentationMask | undefined;
+  private segmentationOn = true;
 
   get ready(): boolean {
     return this.pose !== null;
@@ -189,13 +190,24 @@ export class BodyPerception {
     this.lastImage = image;
     this.lastNormalized = normalized;
 
-    let segmentation = this.lastSeg;
-    if (this.segmenter && valid && this.frameCount % this.opts.segmentationStride === 0) {
-      segmentation = this.runSegmentation(source, ts) ?? this.lastSeg;
-      this.lastSeg = segmentation;
+    // Segmentation is only needed for occluders in front of the garment (bare
+    // forearms, optional hair/silhouette) — skip the second model otherwise.
+    let segmentation: SegmentationMask | undefined;
+    if (this.segmenter && this.segmentationOn) {
+      segmentation = this.lastSeg;
+      if (valid && this.frameCount % this.opts.segmentationStride === 0) {
+        segmentation = this.runSegmentation(source, ts) ?? this.lastSeg;
+        this.lastSeg = segmentation;
+      }
     }
 
     return { timestamp: ts, width, height, valid, confidence, image, normalized, segmentation };
+  }
+
+  /** Enable/disable the segmentation model per frame (pose always runs). */
+  setSegmentationEnabled(on: boolean): void {
+    this.segmentationOn = on;
+    if (!on) this.lastSeg = undefined;
   }
 
   private runSegmentation(

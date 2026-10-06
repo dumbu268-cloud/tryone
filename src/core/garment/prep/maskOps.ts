@@ -158,3 +158,29 @@ export function foregroundRatio(mask: Uint8Array): number {
   for (let i = 0; i < mask.length; i++) if (mask[i]) c++;
   return c / mask.length;
 }
+
+/**
+ * Soft-edge the cutout: separable box blur of a 0/255 mask → 0..255 alpha.
+ * Interior stays opaque; only the boundary gets an anti-aliased ramp.
+ */
+export function featherMask(mask: Uint8Array, w: number, h: number, radius = 1): Uint8Array {
+  if (radius <= 0) return mask.slice();
+  const tmp = new Float32Array(w * h);
+  const out = new Uint8Array(w * h);
+  const n = 2 * radius + 1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let s = 0;
+      for (let k = -radius; k <= radius; k++) s += mask[y * w + Math.min(w - 1, Math.max(0, x + k))]!;
+      tmp[y * w + x] = s / n;
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let s = 0;
+      for (let k = -radius; k <= radius; k++) s += tmp[Math.min(h - 1, Math.max(0, y + k)) * w + x]!;
+      out[y * w + x] = Math.round(s / n);
+    }
+  }
+  return out;
+}

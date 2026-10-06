@@ -1,6 +1,6 @@
-import type { FitResult, GarmentAsset, PoseFrame, Vec2 } from '@/core/types';
+import type { ArmTrackState, FitResult, GarmentAsset, PoseFrame, Vec2 } from '@/core/types';
 import { PoseLandmark } from '@/core/perception/landmarks';
-import { buildGarmentMesh, type GarmentMesh } from '@/core/garment/mesh';
+import { buildGarmentMesh, regionPolygons, type GarmentMesh } from '@/core/garment/mesh';
 import * as v from '@/core/math/vec';
 import {
   bindAttrib,
@@ -29,14 +29,19 @@ export interface RenderSettings {
 }
 
 export const DEFAULT_RENDER_SETTINGS: RenderSettings = {
-  occludeSilhouette: true,
-  // Off by default: segmentation misclassifies bare skin as face in many real
-  // scenes and made the garment see-through. Opt-in; hair-only + gentle now.
+  // Off: a garment overlay must not be clipped to the (lagging, coarse) body
+  // mask — that produced holes/spill. Kept as a diagnostic toggle.
+  occludeSilhouette: false,
   occludeHairFace: false,
   occludeForearms: true,
   harmonize: true,
   debug: false,
 };
+
+/** Does this garment + settings combination need live segmentation at all? */
+export function needsSegmentation(settings: RenderSettings, coversForearm: boolean): boolean {
+  return settings.occludeSilhouette || settings.occludeHairFace || (settings.occludeForearms && !coversForearm);
+}
 
 export interface RenderInput {
   /** The camera frame source (video), or a still image/canvas for tests. */
@@ -49,8 +54,16 @@ export interface RenderInput {
 }
 
 export interface RendererOptions {
+  /** Keep the drawing buffer so a single frame can be screenshotted (tests). */
   preserveDrawingBuffer?: boolean;
 }
+
+const STATE_COLOR: Record<ArmTrackState, [number, number, number]> = {
+  tracked: [0.2, 1.0, 0.4],
+  partial: [0.2, 0.8, 1.0],
+  held: [1.0, 0.85, 0.2],
+  rest: [1.0, 0.35, 0.3],
+};
 
 export class Renderer {
   private readonly gl: WebGL2RenderingContext;
@@ -67,14 +80,15 @@ export class Renderer {
   private readonly videoTex: WebGLTexture;
   private readonly segTex: WebGLTexture;
   private garmentTex: WebGLTexture | null = null;
+  private regionTex: WebGLTexture | null = null;
 
   private mesh: GarmentMesh | null = null;
-  private meshPos: WebGLBuffer | null = null; // dynamic (per-frame positions)
+  private meshPos: WebGLBuffer | null = null;
   private meshUV: WebGLBuffer | null = null;
   private meshAlpha: WebGLBuffer | null = null;
   private meshIndex: WebGLBuffer | null = null;
 
-  private debugBuffer: WebGLBuffer;
+  private readonly debugBuffer: WebGLBuffer;
 
   private garment: GarmentAsset | null = null;
   private lastSegData: Uint8Array | null = null;
@@ -113,14 +127,7 @@ export class Renderer {
     this.videoTex = createTexture(gl, gl.LINEAR);
     this.segTex = createTexture(gl, gl.NEAREST);
     this.debugBuffer = createBuffer(gl, new Float32Array(0), gl.DYNAMIC_DRAW);
-
     gl.disable(gl.DEPTH_TEST);
-    gl.blendFuncSeparate(
-      gl.SRC_ALPHA,
-      gl.ONE_MINUS_SRC_ALPHA,
-      gl.ONE,
-      gl.ONE_MINUS_SRC_ALPHA,
-    );
   }
 
   resize(width: number, height: number): void {
@@ -135,7 +142,7 @@ export class Renderer {
     const gl = this.gl;
     this.garment = garment;
     if (!this.garmentTex) this.garmentTex = createTexture(gl, gl.LINEAR);
-    uploadRGBA(gl, this.garmentTex, garment.image);
+    uploadRGBA(gl, this.garmentTex, garment.image, true, true);
 
     const mesh = buildGarmentMesh(garment);
     this.mesh = mesh;
@@ -146,14 +153,17 @@ export class Renderer {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idx);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
     this.meshIndex = idx;
+
+    if (!this.regionTex) this.regionTex = createTexture(gl, gl.NEAREST);
+    uploadRGBA(gl, this.regionTex, buildRegionCanvas(mesh, garment.textureWidth, garment.textureHeight));
   }
 
   render(input: RenderInput): void {
     const gl = this.gl;
     const { source, sourceReady, fit, frame, settings } = input;
 
-    if (sourceReady) uploadRGBA(gl, this.videoTex, source);
-    this.maybeUploadSeg(frame);
+    if (sourceReady) uploadRGBA(gl, this.videoTex, source, false, settings.harmonize);
+    const hasSeg = this.maybeUploadSeg(frame);
 
     gl.clearColor(0.05, 0.06, 0.08, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -163,21 +173,26 @@ export class Renderer {
 
     gl.enable(gl.BLEND);
     if (this.garment && this.garmentTex && this.mesh && fit.visible && fit.positions) {
-      this.drawGarment(fit, settings);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied garment
+      this.drawGarment(fit, settings, hasSeg);
     }
 
-    // Repaint real forearms over the garment only for bare-arm garments (short/no sleeves).
     const coversForearm = this.garment?.layout.coversForearm ?? false;
-    if (settings.occludeForearms && !coversForearm && this.segUploaded && frame.valid) {
+    if (settings.occludeForearms && !coversForearm && hasSeg && frame.valid) {
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       this.drawForearms(input);
     }
 
-    if (settings.debug) this.drawDebug(fit, frame);
+    if (settings.debug) {
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      this.drawDebug(fit, frame);
+    }
   }
 
-  private maybeUploadSeg(frame: PoseFrame): void {
+  /** Uploads a fresh mask when present; returns whether THIS frame has segmentation. */
+  private maybeUploadSeg(frame: PoseFrame): boolean {
     const seg = frame.segmentation;
-    if (!seg) return;
+    if (!seg) return false;
     if (seg.data !== this.lastSegData) {
       uploadR8(this.gl, this.segTex, seg.width, seg.height, seg.data);
       this.lastSegData = seg.data;
@@ -185,6 +200,7 @@ export class Renderer {
       this.segH = seg.height;
       this.segUploaded = true;
     }
+    return this.segUploaded;
   }
 
   private drawVideo(): void {
@@ -198,7 +214,7 @@ export class Renderer {
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
-  private drawGarment(fit: FitResult, settings: RenderSettings): void {
+  private drawGarment(fit: FitResult, settings: RenderSettings, hasSeg: boolean): void {
     const gl = this.gl;
     const mesh = this.mesh!;
     const p = this.garmentProgram;
@@ -213,32 +229,34 @@ export class Renderer {
 
     gl.uniform2f(gl.getUniformLocation(p, 'uRes'), this.canvas.width, this.canvas.height);
     gl.uniform2f(gl.getUniformLocation(p, 'uSegRes'), this.segW || 1, this.segH || 1);
-    gl.uniform1i(gl.getUniformLocation(p, 'uHasSeg'), this.segUploaded ? 1 : 0);
+    gl.uniform1i(gl.getUniformLocation(p, 'uHasSeg'), hasSeg ? 1 : 0);
     gl.uniform1i(gl.getUniformLocation(p, 'uOccSil'), settings.occludeSilhouette ? 1 : 0);
     gl.uniform1i(gl.getUniformLocation(p, 'uOccHairFace'), settings.occludeHairFace ? 1 : 0);
     gl.uniform1i(gl.getUniformLocation(p, 'uHarmonize'), settings.harmonize ? 1 : 0);
 
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.garmentTex);
-    gl.uniform1i(gl.getUniformLocation(p, 'uGarment'), 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.segTex);
-    gl.uniform1i(gl.getUniformLocation(p, 'uSeg'), 1);
-    gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, this.videoTex);
-    gl.uniform1i(gl.getUniformLocation(p, 'uVideo'), 2);
+    const units: Array<[string, WebGLTexture | null]> = [
+      ['uGarment', this.garmentTex],
+      ['uSeg', this.segTex],
+      ['uVideo', this.videoTex],
+      ['uRegion', this.regionTex],
+    ];
+    units.forEach(([name, tex], i) => {
+      gl.activeTexture(gl.TEXTURE0 + i);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.uniform1i(gl.getUniformLocation(p, name), i);
+    });
 
-    // Depth-ordered draw: a sleeve "behind" the torso is drawn first. Each part
-    // carries its own opacity so an untracked sleeve can fade out independently.
     const opLoc = gl.getUniformLocation(p, 'uOpacity');
+    const partLoc = gl.getUniformLocation(p, 'uPart');
     const parts = [
-      { range: mesh.ranges.torso, z: 0, op: fit.opacity },
-      { range: mesh.ranges.leftSleeve, z: fit.leftSleeveBehind ? -1 : 1, op: fit.opacity * (fit.leftSleeveOpacity ?? 1) },
-      { range: mesh.ranges.rightSleeve, z: fit.rightSleeveBehind ? -1 : 1, op: fit.opacity * (fit.rightSleeveOpacity ?? 1) },
+      { part: 0, range: mesh.ranges.torso, z: 0, op: fit.opacity },
+      { part: 1, range: mesh.ranges.leftSleeve, z: fit.leftSleeveBehind ? -1 : 1, op: fit.opacity * (fit.leftSleeveOpacity ?? 1) },
+      { part: 2, range: mesh.ranges.rightSleeve, z: fit.rightSleeveBehind ? -1 : 1, op: fit.opacity * (fit.rightSleeveOpacity ?? 1) },
     ].sort((a, b) => a.z - b.z);
     for (const part of parts) {
-      if (part.op <= 0.01) continue;
+      if (part.op <= 0.01 || part.range.count === 0) continue;
       gl.uniform1f(opLoc, part.op);
+      gl.uniform1i(partLoc, part.part);
       gl.drawElements(gl.TRIANGLES, part.range.count, gl.UNSIGNED_SHORT, part.range.start * 2);
     }
   }
@@ -255,16 +273,12 @@ export class Renderer {
     const wristB = frame.image[PoseLandmark.RIGHT_WRIST]!;
 
     const shoulderZ =
-      (frame.normalized[PoseLandmark.LEFT_SHOULDER]!.z +
-        frame.normalized[PoseLandmark.RIGHT_SHOULDER]!.z) /
-      2;
-    const frontA = this.forearmFront(elbowA, wristA, quad, frame, PoseLandmark.LEFT_WRIST, shoulderZ);
-    const frontB = this.forearmFront(elbowB, wristB, quad, frame, PoseLandmark.RIGHT_WRIST, shoulderZ);
+      (frame.normalized[PoseLandmark.LEFT_SHOULDER]!.z + frame.normalized[PoseLandmark.RIGHT_SHOULDER]!.z) / 2;
+    const frontA = forearmFront(elbowA, wristA, quad, frame, PoseLandmark.LEFT_WRIST, shoulderZ);
+    const frontB = forearmFront(elbowB, wristB, quad, frame, PoseLandmark.RIGHT_WRIST, shoulderZ);
     if (frontA <= 0 && frontB <= 0) return;
 
-    const topEdge = v.dist(fit.quad.tl, fit.quad.tr);
-    const radius = v.clamp(topEdge * 0.14, 16, 90);
-
+    const radius = v.clamp(v.dist(fit.quad.tl, fit.quad.tr) * 0.14, 16, 90);
     const p = this.forearmProgram;
     gl.useProgram(p);
     bindAttrib(gl, p, 'aPos', this.quadPos, 2);
@@ -277,30 +291,13 @@ export class Renderer {
     gl.uniform1f(gl.getUniformLocation(p, 'uFrontL'), frontA);
     gl.uniform1f(gl.getUniformLocation(p, 'uFrontR'), frontB);
     gl.uniform1f(gl.getUniformLocation(p, 'uRadius'), radius);
-
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.videoTex);
     gl.uniform1i(gl.getUniformLocation(p, 'uVideo'), 0);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.segTex);
     gl.uniform1i(gl.getUniformLocation(p, 'uSeg'), 1);
-
     gl.drawArrays(gl.TRIANGLES, 0, 6);
-  }
-
-  private forearmFront(
-    elbow: Vec2,
-    wrist: Vec2,
-    quad: Vec2[],
-    frame: PoseFrame,
-    wristIdx: number,
-    shoulderZ: number,
-  ): number {
-    const mid = v.mid(elbow, wrist);
-    const inside = pointInQuad(mid, quad) || pointInQuad(wrist, quad);
-    if (!inside) return 0;
-    const wristZ = frame.normalized[wristIdx]!.z;
-    return v.clamp((shoulderZ - wristZ) * 6 + 0.4, 0, 1);
   }
 
   private drawDebug(fit: FitResult, frame: PoseFrame): void {
@@ -310,35 +307,28 @@ export class Renderer {
     const w = this.canvas.width;
     const h = this.canvas.height;
     const toClip = (pt: Vec2) => [(pt.x / w) * 2 - 1, 1 - (pt.y / h) * 2];
-
-    if (fit.visible) {
-      const q = [fit.quad.tl, fit.quad.tr, fit.quad.br, fit.quad.bl];
+    const draw = (pts: Vec2[], mode: number, rgb: [number, number, number], size = 1) => {
+      if (pts.length === 0) return;
       gl.bindBuffer(gl.ARRAY_BUFFER, this.debugBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(q.flatMap(toClip)), gl.DYNAMIC_DRAW);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pts.flatMap(toClip)), gl.DYNAMIC_DRAW);
       bindAttrib(gl, p, 'aPos', this.debugBuffer, 2);
-      gl.uniform4f(gl.getUniformLocation(p, 'uColor'), 0.2, 1.0, 0.6, 1.0);
-      gl.uniform1f(gl.getUniformLocation(p, 'uPointSize'), 1);
-      gl.drawArrays(gl.LINE_LOOP, 0, 4);
+      gl.uniform4f(gl.getUniformLocation(p, 'uColor'), rgb[0], rgb[1], rgb[2], 1);
+      gl.uniform1f(gl.getUniformLocation(p, 'uPointSize'), size);
+      gl.drawArrays(mode, 0, pts.length);
+    };
+
+    if (fit.visible && fit.debug) {
+      const k = fit.debug.keypoints; // neckL neckR shL shR pitL pitR hemL hemR
+      if (k.length >= 8) draw([k[0]!, k[2]!, k[4]!, k[6]!, k[7]!, k[5]!, k[3]!, k[1]!], gl.LINE_LOOP, [0.3, 0.9, 1.0]);
+      draw(k, gl.POINTS, [0.3, 0.9, 1.0], 7);
+      for (const arm of fit.debug.arms) {
+        draw(arm.chain, gl.LINE_STRIP, STATE_COLOR[arm.state]);
+        draw(arm.chain, gl.POINTS, STATE_COLOR[arm.state], 6);
+      }
     }
-
     if (frame.valid && frame.image.length >= 33) {
-      const idxs = [
-        PoseLandmark.LEFT_SHOULDER,
-        PoseLandmark.RIGHT_SHOULDER,
-        PoseLandmark.LEFT_ELBOW,
-        PoseLandmark.RIGHT_ELBOW,
-        PoseLandmark.LEFT_WRIST,
-        PoseLandmark.RIGHT_WRIST,
-        PoseLandmark.LEFT_HIP,
-        PoseLandmark.RIGHT_HIP,
-      ];
-      const pts = new Float32Array(idxs.flatMap((i) => toClip(frame.image[i]!)));
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.debugBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, pts, gl.DYNAMIC_DRAW);
-      bindAttrib(gl, p, 'aPos', this.debugBuffer, 2);
-      gl.uniform4f(gl.getUniformLocation(p, 'uColor'), 1.0, 0.85, 0.2, 1.0);
-      gl.uniform1f(gl.getUniformLocation(p, 'uPointSize'), 8);
-      gl.drawArrays(gl.POINTS, 0, idxs.length);
+      const raw = [11, 12, 13, 14, 15, 16, 23, 24].map((i) => frame.image[i]!);
+      draw(raw, gl.POINTS, [1, 1, 1], 4);
     }
   }
 
@@ -351,7 +341,46 @@ export class Renderer {
     gl.deleteTexture(this.videoTex);
     gl.deleteTexture(this.segTex);
     if (this.garmentTex) gl.deleteTexture(this.garmentTex);
+    if (this.regionTex) gl.deleteTexture(this.regionTex);
   }
+}
+
+/** Region map in texture space: R = image-left sleeve, G = image-right sleeve, else torso. */
+export function buildRegionCanvas(mesh: GarmentMesh, w: number, h: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w));
+  c.height = Math.max(1, Math.round(h));
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.globalCompositeOperation = 'lighter';
+  const polys = regionPolygons(mesh);
+  const fill = (poly: Vec2[] | null, color: string) => {
+    if (!poly || poly.length < 3) return;
+    ctx.beginPath();
+    ctx.moveTo(poly[0]!.x, poly[0]!.y);
+    for (const q of poly.slice(1)) ctx.lineTo(q.x, q.y);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  };
+  fill(polys.left, '#ff0000');
+  fill(polys.right, '#00ff00');
+  return c;
+}
+
+function forearmFront(
+  elbow: Vec2,
+  wrist: Vec2,
+  quad: Vec2[],
+  frame: PoseFrame,
+  wristIdx: number,
+  shoulderZ: number,
+): number {
+  const inside = pointInQuad(v.mid(elbow, wrist), quad) || pointInQuad(wrist, quad);
+  if (!inside) return 0;
+  const wristZ = frame.normalized[wristIdx]!.z;
+  return v.clamp((shoulderZ - wristZ) * 6 + 0.4, 0, 1);
 }
 
 function pointInQuad(p: Vec2, quad: Vec2[]): boolean {
@@ -359,8 +388,7 @@ function pointInQuad(p: Vec2, quad: Vec2[]): boolean {
   for (let i = 0; i < quad.length; i++) {
     const a = quad[i]!;
     const b = quad[(i + 1) % quad.length]!;
-    const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-    const s = Math.sign(cross);
+    const s = Math.sign((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x));
     if (s !== 0) {
       if (sign === 0) sign = s;
       else if (s !== sign) return false;

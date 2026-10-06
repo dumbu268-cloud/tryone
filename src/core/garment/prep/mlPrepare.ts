@@ -1,11 +1,13 @@
 import type { GarmentPrepResult, GarmentPreparer } from '@/core/types';
-import { analyzeGarment } from './analyze';
+import { analyzeGarment, type GarmentAnalysis } from './analyze';
+import { rigFromPose, rigFromSilhouette } from '@/core/garment/rig';
 import { ClassicGarmentPreparer } from './prepare';
 import { ClothingSegmenter, type ClothingSegmenterOptions } from './ClothingSegmenter';
 import {
   categoryMask,
   closeMask,
   erodeEdge,
+  featherMask,
   foregroundRatio,
   keepMainComponent,
   zeroBelow,
@@ -33,6 +35,8 @@ export interface MlPrepareOptions extends ClothingSegmenterOptions {
 export class MlGarmentPreparer implements GarmentPreparer {
   private readonly seg = new ClothingSegmenter();
   private initPromise: Promise<void> | null = null;
+  /** Source-model pose from the last prepare() (texture px), for debugging. */
+  lastPose: { x: number; y: number; visibility: number }[] | null = null;
 
   constructor(private readonly opts: MlPrepareOptions = {}) {}
 
@@ -47,6 +51,7 @@ export class MlGarmentPreparer implements GarmentPreparer {
     const { w, h } = targetSize(source, this.opts.maxDim ?? MAX_DIM);
     const { canvas, imageData } = rasterize(source, w, h);
     const { categories, pose } = this.seg.segment(canvas, w, h);
+    this.lastPose = pose;
 
     let mask = categoryMask(categories, SegClass.CLOTHES);
 
@@ -73,8 +78,8 @@ export class MlGarmentPreparer implements GarmentPreparer {
     mask = erodeEdge(mask, w, h, 1);
 
     const fg = foregroundRatio(mask);
-    const analysis = analyzeGarment(mask, w, h, fg);
-    const image = buildCutout(imageData, mask, w, h);
+    const analysis = attachRig(analyzeGarment(mask, w, h, fg), mask, w, h, pose);
+    const image = buildCutout(imageData, featherMask(mask, w, h, 1), w, h);
     const asset = assetFromAnalysis(analysis, image, w, h, this.opts.name);
 
     return { asset, diagnostics: diagnosticsFromAnalysis(analysis, { method: 'ml' }) };
@@ -105,4 +110,37 @@ export class HybridGarmentPreparer implements GarmentPreparer {
     }
     return this.classic.prepare(source);
   }
+}
+
+/**
+ * Worn garment (model in the photo): build the rig from the model's own pose so
+ * garment keypoints correspond 1:1 to the user's body keypoints, and classify
+ * sleeves by how far the fabric runs along the arm (robust to arms-down shots).
+ * Without a usable pose, fall back to the silhouette rig.
+ */
+function attachRig(
+  analysis: GarmentAnalysis,
+  mask: Uint8Array,
+  w: number,
+  h: number,
+  pose: { x: number; y: number; visibility: number }[] | null,
+): GarmentAnalysis {
+  const fromPose = analysis.supported && pose ? rigFromPose(mask, w, h, pose) : null;
+  if (!fromPose) {
+    return { ...analysis, layout: { ...analysis.layout, rig: rigFromSilhouette(mask, w, h, analysis.layout) } };
+  }
+  const long = fromPose.sleeveLength === 'long';
+  return {
+    ...analysis,
+    type: long ? 'longsleeve' : 'tshirt',
+    sleeveLength: fromPose.sleeveLength,
+    coversForearm: long,
+    ...(fromPose.sleeveLength === 'none' ? { reason: 'No sleeves detected (sleeveless/tank).' } : {}),
+    layout: {
+      ...analysis.layout,
+      sleeveLength: long ? 'long' : 'short',
+      coversForearm: long,
+      rig: fromPose.rig,
+    },
+  };
 }

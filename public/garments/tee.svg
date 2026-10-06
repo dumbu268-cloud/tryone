@@ -27,9 +27,9 @@
   <line x1="340" y1="112" x2="334" y2="195" stroke="#33517f" stroke-width="6" stroke-linecap="round" />
 
   <!-- Torso -->
-  <path d="M120,100 L168,100 Q200,126 232,100 L280,100 L280,420 Q200,432 120,420 Z"
+  <path d="M120,100 L168,100 Q200,126 232,100 L280,100 L280,332 Q200,344 120,332 Z"
         fill="url(#teeFabric)" />
-  <path d="M120,100 L168,100 Q200,126 232,100 L280,100 L280,420 Q200,432 120,420 Z"
+  <path d="M120,100 L168,100 Q200,126 232,100 L280,100 L280,332 Q200,344 120,332 Z"
         fill="url(#teeVolume)" />
 
   <!-- Collar ribbing -->
@@ -38,6 +38,6 @@
   <path d="M171,96 Q200,120 229,96" fill="none" stroke="#86a2d6" stroke-width="2.5"
         stroke-linecap="round" opacity="0.8" />
 
-  <path d="M120,100 L120,420" fill="none" stroke="#000000" stroke-width="10" opacity="0.06" />
-  <path d="M280,100 L280,420" fill="none" stroke="#000000" stroke-width="10" opacity="0.06" />
+  <path d="M120,100 L120,332" fill="none" stroke="#000000" stroke-width="10" opacity="0.06" />
+  <path d="M280,100 L280,332" fill="none" stroke="#000000" stroke-width="10" opacity="0.06" />
 </svg>

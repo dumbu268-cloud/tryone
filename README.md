@@ -111,3 +111,33 @@ npm run test:e2e
 > A headless sandbox has no camera or human subject, and SwiftShader software rendering
 > makes inference far slower than real GPU hardware — the compositing cost (~1 ms),
 > however, is representative.
+
+## Fitting model (current)
+
+The garment is fitted by **keypoint correspondence**, not a fixed template:
+
+- **Body keypoints** (from pose): neck sides (shoulders + mouth), shoulder tops,
+  armpits, torso direction. The same estimator runs on a model in a product photo.
+- **Garment rig**: the matching keypoints on the garment (from the model's pose for
+  worn photos, from the outline for flat-lays) plus a skeleton for each sleeve, and a
+  region map separating sleeve fabric from torso fabric.
+- **Torso**: thin-plate-spline warp garment → body keypoints. The hem keeps the
+  garment's own length and taper. It never depends on the arms.
+- **Sleeves**: tubes along shoulder → elbow → wrist. The elbow alone drives the upper
+  sleeve, a visible hand alone infers the elbow (two-bone IK), and a lost arm holds
+  its last pose then eases to a resting hang. No "move your arms" instructions.
+- Segmentation runs only when an occluder needs it (bare forearms on tees/tanks).
+
+## Real-footage replay bench
+
+Replays recorded video of real people through the live pipeline frame by frame
+(normal / close / far framing, simulated arm-landmark loss) and saves checkpoint
+screenshots to `e2e/__artifacts__/replay/<TAG>/`:
+
+```bash
+npm run setup:test-media                       # one-time: downloads the clips
+TAG=after RUNS=long-normal,long-close,tee-close npm run test:replay
+```
+
+Scenarios live in `e2e/replay.spec.ts`. This complements, but does not replace,
+testing on a real webcam.
