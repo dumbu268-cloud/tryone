@@ -1,64 +1,43 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="400" height="440" viewBox="0 0 400 440">
   <defs>
-    <!-- Base fabric shading: lighter at the chest, darker toward the hem. -->
-    <linearGradient id="fabric" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="teeFabric" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#6485c6" />
       <stop offset="0.55" stop-color="#4f72b4" />
       <stop offset="1" stop-color="#3d5c96" />
     </linearGradient>
-    <!-- Volume: a soft highlight in the chest centre fading to gently shaded edges. -->
-    <radialGradient id="volume" cx="0.5" cy="0.42" r="0.65">
+    <linearGradient id="teeSleeveL" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0" stop-color="#5578b8" />
+      <stop offset="1" stop-color="#4a6aa6" />
+    </linearGradient>
+    <linearGradient id="teeSleeveR" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5578b8" />
+      <stop offset="1" stop-color="#4a6aa6" />
+    </linearGradient>
+    <radialGradient id="teeVolume" cx="0.5" cy="0.42" r="0.65">
       <stop offset="0" stop-color="#ffffff" stop-opacity="0.14" />
       <stop offset="0.65" stop-color="#ffffff" stop-opacity="0" />
       <stop offset="1" stop-color="#000000" stop-opacity="0.13" />
     </radialGradient>
-    <linearGradient id="leftShade" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#000000" stop-opacity="0.16" />
-      <stop offset="1" stop-color="#000000" stop-opacity="0" />
-    </linearGradient>
-    <linearGradient id="rightShade" x1="1" y1="0" x2="0" y2="0">
-      <stop offset="0" stop-color="#000000" stop-opacity="0.16" />
-      <stop offset="1" stop-color="#000000" stop-opacity="0" />
-    </linearGradient>
-
-    <!-- Shared t-shirt silhouette. -->
-    <path id="tee" d="
-      M168,84
-      L108,104
-      L74,182
-      Q104,188 138,190
-      L120,420
-      Q200,436 280,420
-      L262,190
-      Q296,188 326,182
-      L292,104
-      L232,84
-      Q200,112 168,84
-      Z" />
   </defs>
 
-  <!-- Body -->
-  <use href="#tee" fill="url(#fabric)" />
-  <!-- Volume shading -->
-  <use href="#tee" fill="url(#volume)" />
-  <!-- Side shading (clipped to the silhouette) -->
-  <clipPath id="clip"><use href="#tee" /></clipPath>
-  <g clip-path="url(#clip)">
-    <rect x="0" y="0" width="140" height="440" fill="url(#leftShade)" />
-    <rect x="260" y="0" width="140" height="440" fill="url(#rightShade)" />
-    <!-- Soft sleeve-seam shading where the sleeves meet the body -->
-    <path d="M108,104 Q104,150 138,190" fill="none" stroke="#2f4a7d" stroke-width="6"
-          stroke-linecap="round" opacity="0.25" />
-    <path d="M292,104 Q296,150 262,190" fill="none" stroke="#2f4a7d" stroke-width="6"
-          stroke-linecap="round" opacity="0.25" />
-  </g>
+  <!-- Short sleeves -->
+  <polygon points="120,100 60,112 66,195 120,185" fill="url(#teeSleeveL)" />
+  <polygon points="280,100 340,112 334,195 280,185" fill="url(#teeSleeveR)" />
+  <line x1="60" y1="112" x2="66" y2="195" stroke="#33517f" stroke-width="6" stroke-linecap="round" />
+  <line x1="340" y1="112" x2="334" y2="195" stroke="#33517f" stroke-width="6" stroke-linecap="round" />
+
+  <!-- Torso -->
+  <path d="M120,100 L168,100 Q200,126 232,100 L280,100 L280,420 Q200,432 120,420 Z"
+        fill="url(#teeFabric)" />
+  <path d="M120,100 L168,100 Q200,126 232,100 L280,100 L280,420 Q200,432 120,420 Z"
+        fill="url(#teeVolume)" />
 
   <!-- Collar ribbing -->
-  <path d="M168,84 Q200,112 232,84" fill="none" stroke="#2f4a7d" stroke-width="7"
+  <path d="M168,100 Q200,126 232,100" fill="none" stroke="#2f4a7d" stroke-width="7"
         stroke-linecap="round" />
-  <path d="M171,80 Q200,106 229,80" fill="none" stroke="#86a2d6" stroke-width="2.5"
+  <path d="M171,96 Q200,120 229,96" fill="none" stroke="#86a2d6" stroke-width="2.5"
         stroke-linecap="round" opacity="0.8" />
 
-  <!-- Faint outline to seat the garment against the body -->
-  <use href="#tee" fill="none" stroke="#2b3f66" stroke-width="2" stroke-opacity="0.35" />
+  <path d="M120,100 L120,420" fill="none" stroke="#000000" stroke-width="10" opacity="0.06" />
+  <path d="M280,100 L280,420" fill="none" stroke="#000000" stroke-width="10" opacity="0.06" />
 </svg>

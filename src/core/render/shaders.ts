@@ -29,30 +29,33 @@ void main() {
 }`;
 
 export const GARMENT_VS = /* glsl */ `#version 300 es
-in vec2 aTexPx;  // garment texture-pixel coordinate
-in vec2 aUV;     // 0..1 garment UV (top-left origin)
-uniform mat3 uH; // homography: garment texPx -> screen px (column-major)
+in vec2 aScreenPx; // deformed vertex position, screen px (top-left origin)
+in vec2 aUV;       // 0..1 garment UV (top-left origin)
+in float aAlpha;   // per-vertex edge feather
 uniform vec2 uRes;
 out vec2 vUV;
+out float vAlpha;
 void main() {
-  vec3 p = uH * vec3(aTexPx, 1.0);
-  vec2 s = p.xy / p.z;                       // screen px, top-left origin
-  vec2 clip = vec2(s.x / uRes.x * 2.0 - 1.0, 1.0 - s.y / uRes.y * 2.0);
+  vec2 clip = vec2(aScreenPx.x / uRes.x * 2.0 - 1.0, 1.0 - aScreenPx.y / uRes.y * 2.0);
   gl_Position = vec4(clip, 0.0, 1.0);
   vUV = aUV;
+  vAlpha = aAlpha;
 }`;
 
 export const GARMENT_FS = /* glsl */ `#version 300 es
 precision highp float;
 in vec2 vUV;
+in float vAlpha;
 uniform sampler2D uGarment;
 uniform sampler2D uSeg;
+uniform sampler2D uVideo;
 uniform vec2 uRes;
 uniform vec2 uSegRes;
 uniform float uOpacity;
 uniform int uHasSeg;
 uniform int uOccSil;
 uniform int uOccHairFace;
+uniform int uHarmonize;
 out vec4 outColor;
 
 float catAt(vec2 uv) {
@@ -61,12 +64,14 @@ float catAt(vec2 uv) {
 
 void main() {
   vec4 g = texture(uGarment, vec2(vUV.x, 1.0 - vUV.y));
-  float a = g.a * uOpacity;
+  float a = g.a * vAlpha * uOpacity;
   if (a <= 0.002) discard;
 
+  vec3 rgb = g.rgb;
+  vec2 suv = vec2(gl_FragCoord.x / uRes.x, 1.0 - gl_FragCoord.y / uRes.y);
+  vec2 segUV = vec2(1.0 - suv.x, 1.0 - suv.y);
+
   if (uHasSeg == 1 && (uOccSil == 1 || uOccHairFace == 1)) {
-    vec2 suv = vec2(gl_FragCoord.x / uRes.x, 1.0 - gl_FragCoord.y / uRes.y);
-    vec2 segUV = vec2(1.0 - suv.x, 1.0 - suv.y);
     vec2 px = 1.0 / uSegRes;
     float sil = 0.0;
     float hf = 0.0;
@@ -82,9 +87,20 @@ void main() {
     if (uOccSil == 1) a *= sil;
     if (uOccHairFace == 1) a *= (1.0 - hf);
   }
-
   if (a <= 0.002) discard;
-  outColor = vec4(g.rgb, a);
+
+  // Mild light harmonization: nudge garment luminance toward the scene behind it.
+  if (uHarmonize == 1) {
+    vec3 bg = texture(uVideo, vec2(1.0 - suv.x, 1.0 - suv.y)).rgb;
+    float sceneL = dot(bg, vec3(0.299, 0.587, 0.114));
+    float gL = dot(rgb, vec3(0.299, 0.587, 0.114));
+    if (gL > 0.02) {
+      float targetL = mix(gL, clamp(sceneL, gL * 0.65, gL * 1.5), 0.3);
+      rgb *= targetL / gL;
+    }
+  }
+
+  outColor = vec4(rgb, a);
 }`;
 
 // Re-paints the real forearms (camera skin pixels) over the garment where a

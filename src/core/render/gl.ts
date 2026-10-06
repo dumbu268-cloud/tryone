@@ -42,7 +42,7 @@ function compileShader(
 
 export function createBuffer(
   gl: WebGL2RenderingContext,
-  data: BufferSource,
+  data: AllowSharedBufferSource,
   usage: number = gl.STATIC_DRAW,
 ): WebGLBuffer {
   const buffer = gl.createBuffer();

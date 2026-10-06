@@ -3,7 +3,7 @@
 // `window.__selftest`. Driven by the `?selftest=1` URL param (see main.tsx) and
 // consumed by the Playwright e2e test. Not shipped in the normal app flow.
 import { BodyPerception } from '@/core/perception/BodyPerception';
-import { MeshWarpEngine } from '@/core/engine/MeshWarpEngine';
+import { ArticulatedEngine } from '@/core/engine/ArticulatedEngine';
 import { loadGarment } from '@/core/garment/loader';
 import { DEFAULT_GARMENT } from '@/core/garment/catalog';
 import type { FitResult, PoseFrame } from '@/core/types';
@@ -52,7 +52,7 @@ export async function runSelfTest(imageUrl: string): Promise<SelfTestResult> {
     result.hasSegmentation = !!frame.segmentation;
 
     result.stage = 'fit';
-    const engine = new MeshWarpEngine();
+    const engine = new ArticulatedEngine();
     const garment = await loadGarment(DEFAULT_GARMENT);
     engine.prepare(garment);
     let fit: FitResult | null = null;

@@ -1,10 +1,11 @@
 import { Camera, CameraError, type CameraOptions } from '@/core/camera/Camera';
 import { BodyPerception, type PerceptionOptions } from '@/core/perception/BodyPerception';
-import { MeshWarpEngine, type MeshWarpOptions } from '@/core/engine/MeshWarpEngine';
+import { ArticulatedEngine, type ArticulatedOptions } from '@/core/engine/ArticulatedEngine';
 import { Renderer, DEFAULT_RENDER_SETTINGS, type RenderSettings } from '@/core/render/Renderer';
 import { Metrics, type MetricsSnapshot } from '@/core/perf/Metrics';
 import { loadGarment } from '@/core/garment/loader';
 import { DEFAULT_GARMENT } from '@/core/garment/catalog';
+import type { GarmentDescriptor } from '@/core/types';
 
 export type MirrorStatus = 'idle' | 'initializing' | 'running' | 'stopped' | 'error';
 
@@ -18,7 +19,7 @@ export interface LiveMirrorConfig {
   cameraWidth?: number;
   cameraHeight?: number;
   perception?: PerceptionOptions;
-  engine?: MeshWarpOptions;
+  engine?: ArticulatedOptions;
   render?: Partial<RenderSettings>;
   /** How often (Hz) to emit metrics to the UI. */
   metricsHz?: number;
@@ -28,7 +29,7 @@ const hasRVFC = (video: HTMLVideoElement): boolean =>
   typeof (video as Partial<HTMLVideoElement>).requestVideoFrameCallback === 'function';
 
 /**
- * Orchestrates the live loop: Camera -> BodyPerception -> MeshWarpEngine ->
+ * Orchestrates the live loop: Camera -> BodyPerception -> ArticulatedEngine ->
  * Renderer, with performance metrics. Runs entirely outside React; the UI only
  * subscribes to low-frequency status + throttled metrics callbacks.
  */
@@ -39,9 +40,10 @@ export class LiveMirror {
 
   private readonly camera: Camera;
   private readonly perception = new BodyPerception();
-  private readonly engine: MeshWarpEngine;
+  private readonly engine: ArticulatedEngine;
   private renderer: Renderer | null = null;
   private readonly metrics = new Metrics();
+  private garmentDesc: GarmentDescriptor = DEFAULT_GARMENT;
 
   private settings: RenderSettings;
   private status: MirrorStatus = 'idle';
@@ -55,7 +57,7 @@ export class LiveMirror {
     this.canvas = canvas;
     this.config = config;
     this.cb = cb;
-    this.engine = new MeshWarpEngine(config.engine);
+    this.engine = new ArticulatedEngine(config.engine);
     this.settings = { ...DEFAULT_RENDER_SETTINGS, ...config.render };
     this.metricsInterval = 1000 / (config.metricsHz ?? 3);
     this.camera = new Camera();
@@ -71,6 +73,20 @@ export class LiveMirror {
 
   setRenderSettings(partial: Partial<RenderSettings>): void {
     this.settings = { ...this.settings, ...partial };
+  }
+
+  getGarmentId(): string {
+    return this.garmentDesc.id;
+  }
+
+  /** Switch garments. Takes effect immediately if running, else on next start. */
+  async setGarment(descriptor: GarmentDescriptor): Promise<void> {
+    this.garmentDesc = descriptor;
+    if (this.renderer) {
+      const garment = await loadGarment(descriptor);
+      this.engine.prepare(garment);
+      this.renderer.setGarment(garment);
+    }
   }
 
   async start(): Promise<void> {
@@ -93,7 +109,7 @@ export class LiveMirror {
       this.metrics.setDelegate(delegate);
 
       this.setStatus('initializing', 'Preparing garment…');
-      const garment = await loadGarment(DEFAULT_GARMENT);
+      const garment = await loadGarment(this.garmentDesc);
       this.engine.prepare(garment);
       this.renderer.setGarment(garment);
 

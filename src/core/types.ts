@@ -78,7 +78,7 @@ export type GarmentType = 'tshirt' | 'longsleeve' | 'hoodie' | 'dress';
 /**
  * Control points on the garment texture, in texture-pixel space. These map to
  * body landmarks to position/deform the garment. Shoulders + hem form the
- * homography source quad; sleeve points are reserved for Phase-2 deformation.
+ * torso quad; sleeve points are kept for reference/debug.
  */
 export interface GarmentAnchors {
   neck: Vec2;
@@ -88,6 +88,39 @@ export interface GarmentAnchors {
   rightHem: Vec2;
   leftSleeve?: Vec2;
   rightSleeve?: Vec2;
+}
+
+export interface Quad {
+  tl: Vec2;
+  tr: Vec2;
+  br: Vec2;
+  bl: Vec2;
+}
+
+/**
+ * A sleeve region in the garment's flat-lay texture space. The "root" edge is
+ * the armhole (seam with the torso); the "tip" edge is the cuff. `rootTop`
+ * sits at the shoulder, `rootBottom` at the underarm.
+ */
+export interface SleeveLayout {
+  rootTop: Vec2;
+  rootBottom: Vec2;
+  tipTop: Vec2;
+  tipBottom: Vec2;
+}
+
+/**
+ * Describes how the garment texture decomposes into deformable regions. Used by
+ * the mesh builder (topology) and the articulated engine (deformation). All
+ * coordinates are in texture-pixel space.
+ */
+export interface GarmentLayout {
+  torso: Quad;
+  leftSleeve: SleeveLayout;
+  rightSleeve: SleeveLayout;
+  sleeveLength: 'short' | 'long';
+  /** True when sleeves cover the forearm (disables the bare-forearm repaint). */
+  coversForearm: boolean;
 }
 
 /** Serializable garment description (no decoded image). */
@@ -100,6 +133,7 @@ export interface GarmentDescriptor {
   textureWidth: number;
   textureHeight: number;
   anchors: GarmentAnchors;
+  layout: GarmentLayout;
   zOrder: number;
   colorHints?: { dominant: [number, number, number] };
 }
@@ -114,25 +148,33 @@ export interface GarmentAsset {
   /** Decoded texture usable as a WebGL texture source. */
   image: TexImageSource;
   anchors: GarmentAnchors;
+  layout: GarmentLayout;
   zOrder: number;
   colorHints?: { dominant: [number, number, number] };
 }
 
-/** Geometry describing where/how to draw the garment for one frame. */
+/**
+ * Geometry describing how to draw the garment for one frame.
+ *
+ * The articulated engine (Phase 2) fills `positions` (per-vertex screen-space
+ * coordinates for the garment mesh) plus draw-order flags. `quad` is still the
+ * torso quad, used for debug overlay and forearm-occlusion. `homography` is
+ * retained (optional) for the simpler Phase-1 MeshWarpEngine.
+ */
 export interface FitResult {
-  /** Homography mapping garment texture-px -> screen-px (row-major). */
-  homography: Mat3;
-  /** Target quad corners in screen space (debug/overlay + sanity checks). */
-  quad: { tl: Vec2; tr: Vec2; br: Vec2; bl: Vec2 };
+  /** Torso quad corners in screen space (debug/overlay + forearm occlusion). */
+  quad: Quad;
   /** 0..1 placement opacity; drives fade in/out as tracking gains/loses lock. */
   opacity: number;
   /** Whether the garment should be drawn this frame. */
   visible: boolean;
-  /**
-   * Optional per-vertex screen-space offsets for a future deformable mesh
-   * (Phase 2). Unused by MeshWarpEngine v0.
-   */
-  vertexOffsets?: Float32Array;
+  /** Per-vertex screen-space positions (x,y) matching the garment mesh order. */
+  positions?: Float32Array;
+  /** Draw the left/right sleeve behind the torso (arm is behind the body). */
+  leftSleeveBehind?: boolean;
+  rightSleeveBehind?: boolean;
+  /** Homography (garment texture-px -> screen-px), set by MeshWarpEngine only. */
+  homography?: Mat3;
 }
 
 /**

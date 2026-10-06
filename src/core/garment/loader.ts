@@ -23,6 +23,7 @@ export async function loadGarment(
     textureHeight: desc.textureHeight,
     image,
     anchors: desc.anchors,
+    layout: desc.layout,
     zOrder: desc.zOrder,
     ...(desc.colorHints ? { colorHints: desc.colorHints } : {}),
   };

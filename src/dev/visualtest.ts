@@ -2,7 +2,7 @@
 // the garment onto it with the real WebGL renderer, so the output can be
 // screenshotted and inspected. Driven by `?visualtest=1` (see main.tsx).
 import { BodyPerception } from '@/core/perception/BodyPerception';
-import { MeshWarpEngine } from '@/core/engine/MeshWarpEngine';
+import { ArticulatedEngine } from '@/core/engine/ArticulatedEngine';
 import { Renderer, DEFAULT_RENDER_SETTINGS } from '@/core/render/Renderer';
 import { loadGarment } from '@/core/garment/loader';
 import { DEFAULT_GARMENT } from '@/core/garment/catalog';
@@ -23,7 +23,7 @@ export async function runVisualTest(imageUrl: string, canvas: HTMLCanvasElement)
     const perception = new BodyPerception();
     await perception.init({ segmentationStride: 1 });
 
-    const engine = new MeshWarpEngine();
+    const engine = new ArticulatedEngine();
     const garment = await loadGarment(DEFAULT_GARMENT);
     engine.prepare(garment);
 
