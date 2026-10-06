@@ -8,7 +8,7 @@ import { StatusOverlay } from './StatusOverlay';
 import { HintOverlay } from './HintOverlay';
 import { GarmentPicker } from './GarmentPicker';
 import { UrlGarmentInput, type ResolveStage, type UrlResolveOutcome } from './UrlGarmentInput';
-import { DEFAULT_GARMENT, type SampleImage } from '@/core/garment/catalog';
+import type { SampleImage } from '@/core/garment/catalog';
 import { ClassicGarmentPreparer } from '@/core/garment/prep/prepare';
 import { HttpProductResolver } from '@/core/product/HttpProductResolver';
 import { proxiedImageUrl } from '@/core/product/ProductResolver';
@@ -177,7 +177,7 @@ export function TryOnScreen() {
         <div>
           <h1 className="text-lg font-semibold tracking-tight">TryOne — Live Mirror</h1>
           <p className="text-xs text-white/50">
-            Phase 1 · {DEFAULT_GARMENT.name} · real-time geometric try-on
+            Real-time try-on · paste a URL, pick, or upload a garment
           </p>
         </div>
       </header>
