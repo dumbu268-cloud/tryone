@@ -1,0 +1,31 @@
+node_modules
+dist
+dist-ssr
+*.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+
+# Downloaded / copied runtime assets (fetched via `npm run setup`)
+public/models/*
+!public/models/.gitkeep
+public/mediapipe/
+public/test/*
+!public/test/.gitkeep
+
+# Playwright
+test-results
+playwright-report
+blob-report
+playwright/.cache
