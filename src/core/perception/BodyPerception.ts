@@ -26,7 +26,9 @@ const DEFAULTS = {
   modelsBaseUrl: '/models',
   wasmBaseUrl: '/mediapipe/wasm',
   enableSegmentation: true,
-  segmentationStride: 1,
+  // Segmentation is the heaviest stage and occlusion tolerates a lower cadence,
+  // so run it every other frame by default (pose still runs every frame).
+  segmentationStride: 2,
   minPoseDetectionConfidence: 0.5,
   minTrackingConfidence: 0.5,
   minTorsoVisibility: 0.5,
@@ -132,8 +134,19 @@ export class BodyPerception {
    * it is clamped internally if not.
    */
   detect(video: HTMLVideoElement, timestampMs: number): PoseFrame {
-    const width = video.videoWidth || 0;
-    const height = video.videoHeight || 0;
+    return this.detectOn(video, video.videoWidth || 0, video.videoHeight || 0, timestampMs);
+  }
+
+  /**
+   * Run perception on any image source (video, image, or canvas). Used by the
+   * live loop (via {@link detect}) and by the self-test harness on a still image.
+   */
+  detectOn(
+    source: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
+    width: number,
+    height: number,
+    timestampMs: number,
+  ): PoseFrame {
     if (!this.pose || width === 0 || height === 0) {
       return this.emptyFrame(timestampMs, width, height);
     }
@@ -144,7 +157,7 @@ export class BodyPerception {
     this.lastTs = ts;
     this.frameCount++;
 
-    const result = this.pose.detectForVideo(video, ts);
+    const result = this.pose.detectForVideo(source, ts);
     const lm = result.landmarks?.[0];
 
     if (!lm || lm.length < POSE_LANDMARK_COUNT) {
@@ -178,16 +191,19 @@ export class BodyPerception {
 
     let segmentation = this.lastSeg;
     if (this.segmenter && valid && this.frameCount % this.opts.segmentationStride === 0) {
-      segmentation = this.runSegmentation(video, ts) ?? this.lastSeg;
+      segmentation = this.runSegmentation(source, ts) ?? this.lastSeg;
       this.lastSeg = segmentation;
     }
 
     return { timestamp: ts, width, height, valid, confidence, image, normalized, segmentation };
   }
 
-  private runSegmentation(video: HTMLVideoElement, ts: number): SegmentationMask | undefined {
+  private runSegmentation(
+    source: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
+    ts: number,
+  ): SegmentationMask | undefined {
     if (!this.segmenter) return undefined;
-    const res = this.segmenter.segmentForVideo(video, ts);
+    const res = this.segmenter.segmentForVideo(source, ts);
     const mask = res.categoryMask;
     if (!mask) {
       res.close();

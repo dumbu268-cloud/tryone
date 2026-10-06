@@ -173,8 +173,9 @@ export class LiveMirror {
 
       const fit = this.engine.fit(frame);
 
+      const sourceReady = video.readyState >= 2 && video.videoWidth > 0;
       const t2 = performance.now();
-      this.renderer.render({ video, fit, frame, settings: this.settings });
+      this.renderer.render({ source: video, sourceReady, fit, frame, settings: this.settings });
       const t3 = performance.now();
       this.metrics.markRender(t3 - t2);
     } catch (err) {

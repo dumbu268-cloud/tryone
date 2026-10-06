@@ -24,8 +24,14 @@ export function TryOnScreen() {
       canvas,
       { metricsHz: 3 },
       {
-        onStatus: (status, detail) => setStatus(status, detail),
-        onMetrics: (snapshot) => setMetrics(snapshot),
+        onStatus: (status, detail) => {
+          document.documentElement.dataset.mirrorStatus = status;
+          setStatus(status, detail);
+        },
+        onMetrics: (snapshot) => {
+          (window as unknown as { __metrics?: unknown }).__metrics = snapshot;
+          setMetrics(snapshot);
+        },
         onError: (message, kind) => setError({ message, ...(kind ? { kind } : {}) }),
       },
     );

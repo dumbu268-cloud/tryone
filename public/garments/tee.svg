@@ -6,18 +6,18 @@
       <stop offset="0.55" stop-color="#4f72b4" />
       <stop offset="1" stop-color="#3d5c96" />
     </linearGradient>
-    <!-- Volume: a soft highlight in the chest centre fading to shaded edges. -->
-    <radialGradient id="volume" cx="0.5" cy="0.42" r="0.62">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16" />
-      <stop offset="0.6" stop-color="#ffffff" stop-opacity="0" />
-      <stop offset="1" stop-color="#000000" stop-opacity="0.22" />
+    <!-- Volume: a soft highlight in the chest centre fading to gently shaded edges. -->
+    <radialGradient id="volume" cx="0.5" cy="0.42" r="0.65">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14" />
+      <stop offset="0.65" stop-color="#ffffff" stop-opacity="0" />
+      <stop offset="1" stop-color="#000000" stop-opacity="0.13" />
     </radialGradient>
     <linearGradient id="leftShade" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#000000" stop-opacity="0.22" />
+      <stop offset="0" stop-color="#000000" stop-opacity="0.16" />
       <stop offset="1" stop-color="#000000" stop-opacity="0" />
     </linearGradient>
     <linearGradient id="rightShade" x1="1" y1="0" x2="0" y2="0">
-      <stop offset="0" stop-color="#000000" stop-opacity="0.22" />
+      <stop offset="0" stop-color="#000000" stop-opacity="0.16" />
       <stop offset="1" stop-color="#000000" stop-opacity="0" />
     </linearGradient>
 
@@ -44,13 +44,13 @@
   <!-- Side shading (clipped to the silhouette) -->
   <clipPath id="clip"><use href="#tee" /></clipPath>
   <g clip-path="url(#clip)">
-    <rect x="0" y="0" width="150" height="440" fill="url(#leftShade)" />
-    <rect x="250" y="0" width="150" height="440" fill="url(#rightShade)" />
-    <!-- Armpit sleeve shadows -->
-    <ellipse cx="150" cy="196" rx="40" ry="22" fill="#000000" opacity="0.12" />
-    <ellipse cx="250" cy="196" rx="40" ry="22" fill="#000000" opacity="0.12" />
-    <!-- Subtle hem shadow -->
-    <rect x="0" y="398" width="400" height="42" fill="#000000" opacity="0.10" />
+    <rect x="0" y="0" width="140" height="440" fill="url(#leftShade)" />
+    <rect x="260" y="0" width="140" height="440" fill="url(#rightShade)" />
+    <!-- Soft sleeve-seam shading where the sleeves meet the body -->
+    <path d="M108,104 Q104,150 138,190" fill="none" stroke="#2f4a7d" stroke-width="6"
+          stroke-linecap="round" opacity="0.25" />
+    <path d="M292,104 Q296,150 262,190" fill="none" stroke="#2f4a7d" stroke-width="6"
+          stroke-linecap="round" opacity="0.25" />
   </g>
 
   <!-- Collar ribbing -->

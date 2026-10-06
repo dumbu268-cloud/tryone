@@ -18,7 +18,7 @@ export interface MeshWarpOptions {
 
 const DEFAULTS: Required<MeshWarpOptions> = {
   shoulderWidthFactor: 1.12,
-  hemDropFactor: 0.42,
+  hemDropFactor: 0.32,
   shoulderLiftFactor: 0.06,
   fadeSpeed: 0.22,
   minTorsoPx: 24,

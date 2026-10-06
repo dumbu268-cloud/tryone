@@ -48,6 +48,7 @@ export function StatusOverlay({ onStart }: { onStart: () => void }) {
             </p>
           </div>
           <button
+            data-testid="start-camera"
             onClick={onStart}
             className="rounded-lg bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-400"
           >

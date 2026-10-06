@@ -35,10 +35,18 @@ export const DEFAULT_RENDER_SETTINGS: RenderSettings = {
 };
 
 export interface RenderInput {
-  video: HTMLVideoElement;
+  /** The camera frame source (video), or a still image/canvas for tests. */
+  source: TexImageSource;
+  /** Whether `source` currently has drawable pixels. */
+  sourceReady: boolean;
   fit: FitResult;
   frame: PoseFrame;
   settings: RenderSettings;
+}
+
+export interface RendererOptions {
+  /** Keep the drawing buffer so a single frame can be screenshotted (tests). */
+  preserveDrawingBuffer?: boolean;
 }
 
 const GRID_COLS = 10;
@@ -73,12 +81,13 @@ export class Renderer {
   private segW = 0;
   private segH = 0;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, options: RendererOptions = {}) {
     const gl = canvas.getContext('webgl2', {
       alpha: false,
       premultipliedAlpha: false,
       antialias: true,
-      desynchronized: true,
+      desynchronized: !options.preserveDrawingBuffer,
+      preserveDrawingBuffer: options.preserveDrawingBuffer ?? false,
     });
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
     this.gl = gl;
@@ -167,10 +176,10 @@ export class Renderer {
 
   render(input: RenderInput): void {
     const gl = this.gl;
-    const { video, fit, frame, settings } = input;
+    const { source, sourceReady, fit, frame, settings } = input;
 
-    if (video.readyState >= 2 && video.videoWidth > 0) {
-      uploadRGBA(gl, this.videoTex, video);
+    if (sourceReady) {
+      uploadRGBA(gl, this.videoTex, source);
     }
     this.maybeUploadSeg(frame);
 

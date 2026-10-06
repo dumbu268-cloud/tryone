@@ -9,9 +9,14 @@ export function StatsOverlay() {
     metrics.fps >= 25 ? 'text-emerald-400' : metrics.fps >= 15 ? 'text-amber-400' : 'text-rose-400';
 
   return (
-    <div className="pointer-events-none absolute left-3 top-3 rounded-lg bg-black/55 px-3 py-2 font-mono text-[11px] leading-tight text-white/90 backdrop-blur-sm">
+    <div
+      data-testid="stats"
+      className="pointer-events-none absolute left-3 top-3 rounded-lg bg-black/55 px-3 py-2 font-mono text-[11px] leading-tight text-white/90 backdrop-blur-sm"
+    >
       <div className="flex items-baseline gap-2">
-        <span className={`text-sm font-semibold ${fpsColor}`}>{metrics.fps.toFixed(0)}</span>
+        <span data-testid="fps" className={`text-sm font-semibold ${fpsColor}`}>
+          {metrics.fps.toFixed(0)}
+        </span>
         <span className="text-white/60">fps</span>
       </div>
       <Row label="frame" value={`${metrics.frameMs.toFixed(1)} ms`} />
