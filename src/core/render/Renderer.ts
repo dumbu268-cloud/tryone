@@ -30,7 +30,9 @@ export interface RenderSettings {
 
 export const DEFAULT_RENDER_SETTINGS: RenderSettings = {
   occludeSilhouette: true,
-  occludeHairFace: true,
+  // Off by default: segmentation misclassifies bare skin as face in many real
+  // scenes and made the garment see-through. Opt-in; hair-only + gentle now.
+  occludeHairFace: false,
   occludeForearms: true,
   harmonize: true,
   debug: false,

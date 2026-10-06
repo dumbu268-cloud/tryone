@@ -79,13 +79,13 @@ void main() {
       for (int dy = -1; dy <= 1; dy++) {
         float c = catAt(segUV + vec2(float(dx) * px.x, float(dy) * px.y));
         sil += c < 0.5 ? 0.0 : 1.0;                             // 0 = background
-        hf += (abs(c - 1.0) < 0.5 || abs(c - 3.0) < 0.5) ? 1.0 : 0.0; // hair/face
+        hf += (abs(c - 1.0) < 0.5) ? 1.0 : 0.0; // hair only (face-skin misreads bare skin)
       }
     }
     sil /= 9.0;
     hf /= 9.0;
     if (uOccSil == 1) a *= sil;
-    if (uOccHairFace == 1) a *= (1.0 - hf);
+    if (uOccHairFace == 1) a *= (1.0 - hf * 0.7); // gentle: never fully transparent
   }
   if (a <= 0.002) discard;
 
