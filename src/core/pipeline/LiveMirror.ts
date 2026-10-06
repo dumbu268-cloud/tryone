@@ -5,7 +5,7 @@ import { Renderer, DEFAULT_RENDER_SETTINGS, type RenderSettings } from '@/core/r
 import { Metrics, type MetricsSnapshot } from '@/core/perf/Metrics';
 import { loadGarment } from '@/core/garment/loader';
 import { DEFAULT_GARMENT } from '@/core/garment/catalog';
-import type { GarmentDescriptor } from '@/core/types';
+import type { GarmentAsset, GarmentDescriptor } from '@/core/types';
 
 export type MirrorStatus = 'idle' | 'initializing' | 'running' | 'stopped' | 'error';
 
@@ -44,6 +44,7 @@ export class LiveMirror {
   private renderer: Renderer | null = null;
   private readonly metrics = new Metrics();
   private garmentDesc: GarmentDescriptor = DEFAULT_GARMENT;
+  private pendingAsset: GarmentAsset | null = null;
 
   private settings: RenderSettings;
   private status: MirrorStatus = 'idle';
@@ -76,17 +77,28 @@ export class LiveMirror {
   }
 
   getGarmentId(): string {
-    return this.garmentDesc.id;
+    return this.pendingAsset?.id ?? this.garmentDesc.id;
   }
 
-  /** Switch garments. Takes effect immediately if running, else on next start. */
+  /** Switch to a built-in garment descriptor (loaded from its texture URL). */
   async setGarment(descriptor: GarmentDescriptor): Promise<void> {
+    this.pendingAsset = null;
     this.garmentDesc = descriptor;
     if (this.renderer) {
       const garment = await loadGarment(descriptor);
-      this.engine.prepare(garment);
-      this.renderer.setGarment(garment);
+      this.applyGarment(garment);
     }
+  }
+
+  /** Wear an already-prepared GarmentAsset (e.g. from the garment preparer). */
+  setGarmentAsset(asset: GarmentAsset): void {
+    this.pendingAsset = asset;
+    if (this.renderer) this.applyGarment(asset);
+  }
+
+  private applyGarment(garment: GarmentAsset): void {
+    this.engine.prepare(garment);
+    this.renderer?.setGarment(garment);
   }
 
   async start(): Promise<void> {
@@ -109,9 +121,8 @@ export class LiveMirror {
       this.metrics.setDelegate(delegate);
 
       this.setStatus('initializing', 'Preparing garment…');
-      const garment = await loadGarment(this.garmentDesc);
-      this.engine.prepare(garment);
-      this.renderer.setGarment(garment);
+      const garment = this.pendingAsset ?? (await loadGarment(this.garmentDesc));
+      this.applyGarment(garment);
 
       const { width, height } = this.camera.dimensions;
       this.renderer.resize(width || 1280, height || 720);

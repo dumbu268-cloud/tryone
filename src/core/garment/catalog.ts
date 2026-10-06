@@ -92,3 +92,20 @@ export const CATALOG: GarmentDescriptor[] = [LONG_SLEEVE, TEE];
 
 /** Default garment: the long sleeve best demonstrates sleeve articulation. */
 export const DEFAULT_GARMENT = LONG_SLEEVE;
+
+/**
+ * Bundled sample clothing images for the automatic preparation pipeline (Phase 3).
+ * These are ordinary flat-lay garment images on a plain background — the preparer
+ * derives the layout/regions from them (no hand-authored layout).
+ */
+export interface SampleImage {
+  id: string;
+  name: string;
+  url: string;
+}
+
+export const SAMPLE_IMAGES: SampleImage[] = [
+  { id: 'sample-tshirt', name: 'Tee (auto)', url: '/garments/samples/sample-tshirt.svg' },
+  { id: 'sample-longsleeve', name: 'Long sleeve (auto)', url: '/garments/samples/sample-longsleeve.svg' },
+  { id: 'sample-tank', name: 'Tank (auto)', url: '/garments/samples/sample-tank.svg' },
+];

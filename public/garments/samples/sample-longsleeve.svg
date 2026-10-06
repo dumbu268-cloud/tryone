@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="380" height="340" viewBox="0 0 380 340">
+  <rect x="0" y="0" width="380" height="340" fill="#ececee" />
+  <!-- Long-sleeve shirt, flat lay (sleeves extended) -->
+  <polygon points="140,72 20,98 38,188 140,176" fill="#5b3b86" />
+  <polygon points="240,72 360,98 342,188 240,176" fill="#5b3b86" />
+  <path d="M140,72 L170,72 Q190,96 210,72 L240,72 L240,300 Q190,312 140,300 Z" fill="#6a4a97" />
+  <path d="M170,72 Q190,96 210,72" fill="none" stroke="#473066" stroke-width="6" stroke-linecap="round" />
+</svg>

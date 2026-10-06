@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="340" viewBox="0 0 220 340">
+  <rect x="0" y="0" width="220" height="340" fill="#eaeaec" />
+  <!-- Sleeveless tank, flat lay (no sleeves beyond the torso) -->
+  <path d="M60,70 L85,70 Q110,104 135,70 L160,70 L160,300 Q110,312 60,300 Z" fill="#1f8a7a" />
+  <path d="M85,70 Q110,104 135,70" fill="none" stroke="#166357" stroke-width="6" stroke-linecap="round" />
+</svg>
