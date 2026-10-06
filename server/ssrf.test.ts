@@ -7,10 +7,17 @@ describe('validateUrl', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('rejects non-URLs and non-http protocols', () => {
-    expect(validateUrl('not a url', false)).toMatchObject({ ok: false, kind: 'invalid-url' });
+  it('rejects non-http protocols and empty input', () => {
     expect(validateUrl('ftp://example.com', false)).toMatchObject({ ok: false, kind: 'invalid-url' });
     expect(validateUrl('', false)).toMatchObject({ ok: false, kind: 'invalid-url' });
+  });
+
+  it('is forgiving about a missing scheme (prepends https://)', () => {
+    const r = validateUrl('www.shop.com/products/shirt?x=1&y=2', false);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.url.protocol).toBe('https:');
+    const r2 = validateUrl('shop.com/p/1', false);
+    expect(r2.ok).toBe(true);
   });
 
   it('blocks private hosts in production but allows them in dev', () => {
