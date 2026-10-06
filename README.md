@@ -68,9 +68,31 @@ src/
   ui/             React UI shell (screen, controls, stats overlay)
 ```
 
-## Testing notes
+## Testing
 
-Automated tests cover the pure logic (filters, homography, fitting) plus a headless
-Playwright boot test (fake camera) and a one-shot perception test against a sample
-image. **Live-with-a-real-person tracking must be verified in a real browser with a
-webcam** — a headless sandbox has no camera or human subject.
+Unit tests (Vitest) cover the pure logic — One-Euro filter, homography solver, vector
+math, and the `MeshWarpEngine` fitting geometry:
+
+```bash
+npm test
+```
+
+End-to-end tests (Playwright, headless Chromium with a fake camera + SwiftShader) cover:
+
+- **boot** — the app starts, camera + models initialize, the render loop runs (FPS > 0),
+  no runtime errors.
+- **selftest** — the real `image → MediaPipe pose + segmentation → PoseFrame →
+  MeshWarpEngine fit` pipeline against a still person image.
+- **visual** — composites the garment onto that image and screenshots the WebGL output
+  for review (`e2e/__artifacts__/tryon.png`).
+- **perf** — prints measured live-loop metrics (informational).
+
+```bash
+npx playwright install chromium   # one-time
+npm run test:e2e
+```
+
+> **Live-with-a-real-person tracking must be verified in a real browser with a webcam.**
+> A headless sandbox has no camera or human subject, and SwiftShader software rendering
+> makes inference far slower than real GPU hardware — the compositing cost (~1 ms),
+> however, is representative.
