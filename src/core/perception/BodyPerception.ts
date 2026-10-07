@@ -75,7 +75,12 @@ export class BodyPerception {
       this.filters.push(new Vec3Filter(this.opts.oneEuro));
     }
 
-    const fileset = await FilesetResolver.forVisionTasks(this.opts.wasmBaseUrl);
+    // Module workers cannot use importScripts(). Ask MediaPipe for its ES-module
+    // loader there; the main-thread harnesses keep the classic loader.
+    const fileset = await FilesetResolver.forVisionTasks(
+      this.opts.wasmBaseUrl,
+      typeof document === 'undefined',
+    );
 
     // Prefer the GPU delegate; fall back to CPU if GPU init fails.
     try {
@@ -128,6 +133,7 @@ export class BodyPerception {
     this.lastNormalized = [];
     this.lastSeg = undefined;
     this.lastTs = -1;
+    this.frameCount = 0;
   }
 
   /**
@@ -143,7 +149,7 @@ export class BodyPerception {
    * live loop (via {@link detect}) and by the self-test harness on a still image.
    */
   detectOn(
-    source: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
+    source: TexImageSource,
     width: number,
     height: number,
     timestampMs: number,
@@ -211,7 +217,7 @@ export class BodyPerception {
   }
 
   private runSegmentation(
-    source: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
+    source: TexImageSource,
     ts: number,
   ): SegmentationMask | undefined {
     if (!this.segmenter) return undefined;

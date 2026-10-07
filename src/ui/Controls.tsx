@@ -34,18 +34,6 @@ export function Controls({ onStart, onStop, onToggle }: ControlsProps) {
 
       <div className="flex flex-wrap items-center gap-2">
         <Toggle
-          label="Silhouette"
-          checked={settings.occludeSilhouette}
-          disabled={!running}
-          onChange={(v) => onToggle('occludeSilhouette', v)}
-        />
-        <Toggle
-          label="Hair/neck"
-          checked={settings.occludeHairFace}
-          disabled={!running}
-          onChange={(v) => onToggle('occludeHairFace', v)}
-        />
-        <Toggle
           label="Arms"
           checked={settings.occludeForearms}
           disabled={!running}

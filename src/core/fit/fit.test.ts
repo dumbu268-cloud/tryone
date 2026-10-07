@@ -60,6 +60,23 @@ describe('body keypoints', () => {
 });
 
 describe('sleeve tube', () => {
+  it('hard-pins a live sleeve root to the torso armhole at every arm angle', () => {
+    const root = { x: 100, y: 100 };
+    const armhole = { x: 0, y: 60 };
+    // Axis is almost parallel to the armhole — the old adaptive mode relaxed the
+    // seam here and could detach. Pinned mode must still match exact endpoints.
+    const tube = makeTube(
+      [root, { x: 106, y: 190 }, { x: 180, y: 250 }],
+      { root: 30, mid: 18, tip: 9 },
+      'L',
+      armhole,
+      0.25,
+      'pinned',
+    );
+    close(tube.pointAt(0, -1), { x: 100, y: 70 }, 1e-6);
+    close(tube.pointAt(0, 1), { x: 100, y: 130 }, 1e-6);
+  });
+
   it('starts on the armhole line and follows a bent arm', () => {
     const axis = [{ x: 100, y: 100 }, { x: 100, y: 200 }, { x: 180, y: 260 }];
     const tube = makeTube(axis, { root: 30, mid: 20, tip: 10 }, 'L', { x: 1, y: 0 }, 0.2);

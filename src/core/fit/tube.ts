@@ -99,6 +99,7 @@ export function makeTube(
   side: 'L' | 'R',
   armhole: Vec2,
   cap: number,
+  rootMode: 'adaptive' | 'pinned' = 'adaptive',
 ): Tube {
   const segs: { a: Vec2; dir: Vec2; n: Vec2; len: number; start: number }[] = [];
   let total = 0;
@@ -113,7 +114,7 @@ export function makeTube(
   }
   const origin = axis[0] ?? { x: 0, y: 0 };
   if (segs.length === 0) return { length: 0, pointAt: () => origin };
-  const wA = armholeAnchoring(segs[0]!.dir, armhole);
+  const wA = rootMode === 'pinned' ? 1 : armholeAnchoring(segs[0]!.dir, armhole);
   const ah = v.len(armhole) > 1e-6 ? v.normalize(armhole) : segs[0]!.n;
   const rn = slerp2(segs[0]!.n, ah, wA);
   const rootHalf = v.lerpN(profile.mid, profile.root, wA);

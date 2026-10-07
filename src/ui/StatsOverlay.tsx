@@ -5,8 +5,9 @@ export function StatsOverlay() {
   const status = useAppStore((s) => s.status);
   if (status !== 'running' || !metrics) return null;
 
+  const trackFps = metrics.trackingFps;
   const fpsColor =
-    metrics.fps >= 25 ? 'text-emerald-400' : metrics.fps >= 15 ? 'text-amber-400' : 'text-rose-400';
+    trackFps >= 25 ? 'text-emerald-400' : trackFps >= 15 ? 'text-amber-400' : 'text-rose-400';
 
   return (
     <div
@@ -15,15 +16,19 @@ export function StatsOverlay() {
     >
       <div className="flex items-baseline gap-2">
         <span data-testid="fps" className={`text-sm font-semibold ${fpsColor}`}>
-          {metrics.fps.toFixed(0)}
+          {trackFps.toFixed(0)}
         </span>
-        <span className="text-white/60">fps</span>
+        <span className="text-white/60">track fps</span>
       </div>
-      <Row label="frame" value={`${metrics.frameMs.toFixed(1)} ms`} />
+      <Row label="camera" value={`${metrics.cameraFps.toFixed(1)} fps`} />
+      <Row label="camera Δ" value={`${metrics.frameMs.toFixed(1)} ms`} />
       <Row label="infer" value={`${metrics.inferenceMs.toFixed(1)} ms`} />
+      <Row label="fit" value={`${metrics.fitMs.toFixed(1)} ms`} />
       <Row label="render" value={`${metrics.renderMs.toFixed(1)} ms`} />
+      {metrics.droppedFrames > 0 && <Row label="dropped" value={`${metrics.droppedFrames}`} />}
       {metrics.memoryMB !== null && <Row label="heap" value={`${metrics.memoryMB} MB`} />}
-      <Row label="gpu" value={metrics.delegate} />
+      <Row label="delegate" value={metrics.delegate} />
+      <Row label="capture" value={metrics.capture} />
     </div>
   );
 }

@@ -331,18 +331,23 @@ export class ArticulatedEngine implements TryOnEngine {
     const upper = v.dist(root, chain[1]!);
     const armLen = upper + v.dist(chain[1]!, chain[2]!);
     const length = Math.max(4, src.coverage * armLen);
-    const axis = fitPolylineLength([root, chain[1]!, chain[2]!], length);
+    const axis = fitPolylineLength(smoothArmAxis([root, chain[1]!, chain[2]!]), length);
     const reachesForearm = length > upper * 1.05;
+    const sourceMid = src.rig.rootHalfWidth * scale * widthK;
+    const sourceTip = src.rig.tipHalfWidth * scale * widthK;
+    const mid = v.clamp(sourceMid, 0.1 * span, 0.23 * span);
+    const cuff = v.clamp(sourceTip, reachesForearm ? 0.07 * span : 0.09 * span, 0.18 * span);
     return makeTube(
       axis,
       {
         root: v.dist(tip, pit) / 2,
-        mid: Math.max(src.rig.rootHalfWidth * scale * widthK, 0.15 * span),
-        tip: Math.max(src.rig.tipHalfWidth * scale * widthK, (reachesForearm ? 0.1 : 0.13) * span),
+        mid,
+        tip: cuff,
       },
       side,
       v.sub(pit, tip),
       src.cap,
+      'pinned',
     );
   }
 
@@ -353,6 +358,33 @@ export class ArticulatedEngine implements TryOnEngine {
     this.opacity = 0;
     this.last = null;
   }
+}
+
+function smoothArmAxis(points: [Vec2, Vec2, Vec2]): Vec2[] {
+  const [p0, p1, p2] = points;
+  const m0 = v.sub(p1, p0);
+  const m1 = v.scale(v.sub(p2, p0), 0.5);
+  const m2 = v.sub(p2, p1);
+  const out: Vec2[] = [];
+  const segment = (a: Vec2, b: Vec2, ma: Vec2, mb: Vec2, includeStart: boolean) => {
+    const steps = 10;
+    for (let i = includeStart ? 0 : 1; i <= steps; i++) {
+      const t = i / steps;
+      const t2 = t * t;
+      const t3 = t2 * t;
+      const h00 = 2 * t3 - 3 * t2 + 1;
+      const h10 = t3 - 2 * t2 + t;
+      const h01 = -2 * t3 + 3 * t2;
+      const h11 = t3 - t2;
+      out.push({
+        x: h00 * a.x + h10 * ma.x + h01 * b.x + h11 * mb.x,
+        y: h00 * a.y + h10 * ma.y + h01 * b.y + h11 * mb.y,
+      });
+    }
+  };
+  segment(p0, p1, m0, m1, true);
+  segment(p1, p2, m1, m2, false);
+  return out;
 }
 
 /**

@@ -22,15 +22,20 @@ sleeve length, and produces a `GarmentAsset` — no manual authoring.
 ## What it does
 
 - Opens the front camera with a mirrored preview.
-- Perceives the body in real time (MediaPipe pose landmarks + multiclass segmentation).
+- **Body perception runs in a dedicated Worker**: the camera/render loop never waits
+  for MediaPipe. At most one resized (384px long side) frame is in flight; stale camera
+  frames are dropped instead of queued, so latency cannot build up. Live fitting uses
+  pose only; ML segmentation remains in the one-shot garment-preparation path.
 - Builds a smoothed `PoseFrame` (jitter reduced with a One-Euro filter).
 - Fits a garment with an **articulated, deformable mesh**:
   - the **torso** warps with your shoulders and hips (distance, tilt, twist, yaw);
   - each **sleeve follows your shoulder → elbow → wrist**, pinned at the armhole and
     tapering to the cuff, so it bends like worn fabric (not a rigid graphic);
   - untracked arms fall back to a stable hanging pose.
-- Composites on a WebGL2 canvas with occlusion (clip to body, hide behind neck/hair,
-  depth-ordered sleeves, bare-forearm repaint) and mild light harmonization.
+- Composites on a WebGL2 canvas with pose-based forearm occlusion, depth-ordered
+  sleeves, and mild exposure matching. Sleeve seams are hard-pinned at the armhole,
+  use a curved shoulder→elbow→wrist centerline, and hold/ease gracefully when joints
+  disappear.
 - Ships two garments (**long-sleeve shirt**, **crew tee**) with a picker.
 - Shows live FPS / inference / render-latency stats.
 

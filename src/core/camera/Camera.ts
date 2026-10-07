@@ -37,6 +37,7 @@ const FRIENDLY: Record<CameraErrorKind, string> = {
 export interface CameraOptions {
   width?: number;
   height?: number;
+  frameRate?: number;
   facingMode?: 'user' | 'environment';
   /** Called if the camera track ends unexpectedly (unplugged, revoked). */
   onDisconnect?: (error: CameraError) => void;
@@ -93,6 +94,10 @@ export class Camera {
     };
   }
 
+  get settings(): MediaTrackSettings | null {
+    return this.stream?.getVideoTracks()[0]?.getSettings() ?? null;
+  }
+
   async start(opts: CameraOptions = {}): Promise<void> {
     if (this.isActive) return;
     if (this.starting) return this.starting;
@@ -112,8 +117,9 @@ export class Camera {
 
     this.onDisconnect = opts.onDisconnect;
     const facingMode = opts.facingMode ?? 'user';
-    const width = opts.width ?? 1280;
-    const height = opts.height ?? 720;
+    const width = opts.width ?? 960;
+    const height = opts.height ?? 540;
+    const frameRate = opts.frameRate ?? 30;
 
     const ideal: MediaStreamConstraints = {
       audio: false,
@@ -121,6 +127,7 @@ export class Camera {
         facingMode,
         width: { ideal: width },
         height: { ideal: height },
+        frameRate: { ideal: frameRate },
       },
     };
 

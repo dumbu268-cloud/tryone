@@ -48,8 +48,8 @@ export interface GarmentMesh {
 
 const TORSO_COLS = 16;
 const TORSO_ROWS = 20;
-const SLEEVE_LEN = 14;
-const SLEEVE_WID = 8;
+const SLEEVE_LEN = 28;
+const SLEEVE_WID = 12;
 /**
  * Sleeve meshes cover a generous band around the sleeve skeleton (in sleeve
  * half-widths) and run slightly past the cuff. The sleeve LAYER texture is
