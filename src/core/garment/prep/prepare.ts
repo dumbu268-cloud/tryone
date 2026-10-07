@@ -2,7 +2,7 @@ import type { GarmentPrepResult, GarmentPreparer, RgbaImage } from '@/core/types
 import { removeBackground, type BackgroundOptions } from './background';
 import { analyzeGarment, type AnalyzeOptions } from './analyze';
 import { featherMask } from './maskOps';
-import { rigFromSilhouette } from '@/core/garment/rig';
+import { rigFromSilhouette, sleeveClassFromRig } from '@/core/garment/rig';
 import {
   MAX_DIM,
   assetFromAnalysis,
@@ -10,6 +10,7 @@ import {
   diagnosticsFromAnalysis,
   rasterize,
   targetSize,
+  withRig,
 } from './shared';
 
 export interface PrepareOptions {
@@ -39,7 +40,8 @@ export class ClassicGarmentPreparer implements GarmentPreparer {
     const rgba: RgbaImage = { data: imageData.data, width: w, height: h };
     const bg = removeBackground(rgba, this.opts.background);
     const base = analyzeGarment(bg.alpha, w, h, bg.foregroundRatio, this.opts.analyze);
-    const analysis = { ...base, layout: { ...base.layout, rig: rigFromSilhouette(bg.alpha, w, h, base.layout) } };
+    const rig = rigFromSilhouette(bg.alpha, w, h, base.layout);
+    const analysis = withRig(base, rig, sleeveClassFromRig(rig));
 
     const image = buildCutout(imageData, featherMask(bg.alpha, w, h, 1), w, h);
     const asset = assetFromAnalysis(analysis, image, w, h, this.opts.name);

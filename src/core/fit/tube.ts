@@ -78,11 +78,26 @@ function slerp2(a: Vec2, b: Vec2, w: number): Vec2 {
   return { x: Math.cos(ang), y: Math.sin(ang) };
 }
 
+/**
+ * How much the sleeve root should be anchored on the armhole line (0..1).
+ * A sleeve leaving the body at an angle (raised arm, flat-lay sleeve) attaches
+ * along the armhole. A sleeve hanging ALONG the armhole (arm down, hanging
+ * product-photo sleeve) would fold over itself, so its root stays
+ * perpendicular to the arm instead.
+ */
+export function armholeAnchoring(axisDir: Vec2, armhole: Vec2): number {
+  const a = v.normalize(axisDir);
+  const b = v.len(armhole) > 1e-6 ? v.normalize(armhole) : a;
+  const across = Math.abs(a.x * b.y - a.y * b.x); // |sin(angle)|
+  const t = v.clamp((across - 0.35) / 0.4, 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
 export function makeTube(
   axis: readonly Vec2[],
   profile: TubeProfile,
   side: 'L' | 'R',
-  rootNormal: Vec2,
+  armhole: Vec2,
   cap: number,
 ): Tube {
   const segs: { a: Vec2; dir: Vec2; n: Vec2; len: number; start: number }[] = [];
@@ -98,17 +113,21 @@ export function makeTube(
   }
   const origin = axis[0] ?? { x: 0, y: 0 };
   if (segs.length === 0) return { length: 0, pointAt: () => origin };
-  const rn = v.len(rootNormal) > 1e-6 ? v.normalize(rootNormal) : segs[0]!.n;
+  const wA = armholeAnchoring(segs[0]!.dir, armhole);
+  const ah = v.len(armhole) > 1e-6 ? v.normalize(armhole) : segs[0]!.n;
+  const rn = slerp2(segs[0]!.n, ah, wA);
+  const rootHalf = v.lerpN(profile.mid, profile.root, wA);
 
   const halfAt = (t: number): number =>
     t < cap
-      ? v.lerpN(profile.root, profile.mid, t / cap)
-      : v.lerpN(profile.mid, profile.tip, (t - cap) / Math.max(1e-6, 1 - cap));
+      ? v.lerpN(rootHalf, profile.mid, t / cap)
+      : v.lerpN(profile.mid, profile.tip, Math.min(1, (t - cap) / Math.max(1e-6, 1 - cap)));
 
   return {
     length: total,
     pointAt(tIn: number, s: number): Vec2 {
-      const t = v.clamp(tIn, 0, 1);
+      // t may run slightly past 1 (cuff padding): extrapolates along the last segment.
+      const t = v.clamp(tIn, 0, 1.2);
       const d = t * total;
       let k = segs.length - 1;
       for (let i = 0; i < segs.length; i++) {

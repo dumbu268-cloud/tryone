@@ -10,8 +10,10 @@ for sc in "$@"; do
   files=("$DIR/$sc"-*.png)
   inputs=(); filters=""; i=0
   for f in "${files[@]}"; do inputs+=(-i "$f"); filters+="[$i:v]scale=320:180[s$i];"; i=$((i+1)); done
+  if [ "$i" -eq 0 ]; then echo "no images for $sc in $DIR" >&2; exit 1; fi
   chain=""; for ((j=0;j<i;j++)); do chain+="[s$j]"; done
-  "$FF" -hide_banner -loglevel error -y "${inputs[@]}" -filter_complex "${filters}${chain}hstack=inputs=$i" "$DIR/row-$sc.png"
+  if [ "$i" -eq 1 ]; then stack="[s0]null"; else stack="${chain}hstack=inputs=$i"; fi
+  "$FF" -hide_banner -loglevel error -y "${inputs[@]}" -filter_complex "${filters}${stack}" "$DIR/row-$sc.png"
   ROWS+=("$DIR/row-$sc.png")
 done
 inputs=(); for r in "${ROWS[@]}"; do inputs+=(-i "$r"); done

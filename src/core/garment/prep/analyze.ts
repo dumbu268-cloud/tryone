@@ -1,4 +1,5 @@
 import type { BBox, GarmentAnchors, GarmentLayout, GarmentType, Vec2 } from '@/core/types';
+import { rowRuns, runAt } from './maskOps';
 
 // Garment understanding from a binary mask. Assumes a roughly symmetric,
 // front-facing flat-lay top (t-shirt / long-sleeve / simple top). Uses a
@@ -79,16 +80,20 @@ export function analyzeGarment(
   if (foregroundRatio > 0.92) return fallback('Background could not be separated.');
   if (bbox.height < h * 0.15 || bbox.width < w * 0.1) return fallback('Garment region too small.');
 
-  // Torso side bounds: median occupancy over the lower 45% (pure torso, below sleeves).
+  // Torso side bounds over the lower 45%: the CENTRAL run of each row (the run
+  // through the garment's centre line). Row extremes would include sleeves that
+  // hang down beside the body (product / ghost-mannequin photos) in the torso.
   const lo = Math.round(minY + bbox.height * 0.55);
   const hi = maxY;
+  const cx0 = (minX + maxX) / 2;
   const lefts: number[] = [];
   const rights: number[] = [];
   for (let y = lo; y <= hi; y++) {
-    const r = rows[y]!;
-    if (r.count > 0) {
-      lefts.push(r.left);
-      rights.push(r.right);
+    if (rows[y]!.count === 0) continue;
+    const run = runAt(rowRuns(alpha, w, y), cx0);
+    if (run) {
+      lefts.push(run.s);
+      rights.push(run.e);
     }
   }
   const torsoLeft = medianOf(lefts, minX);

@@ -38,6 +38,9 @@ const SCENARIOS: Record<string, Scenario> = {
   'tee-close': { cfg: { video: SIGN, garment: TEE_ML, zoom: 1.7, cy: 0.42 }, fps: 5, checkpoints: SIGN_CP },
   'tee-far': { cfg: { video: JUMP, garment: TEE_ML, zoom: 1.5, cy: 0.42 }, fps: 3, checkpoints: [1.5, 4.5, 7.5, 9.0] },
   'tank-normal': { cfg: { video: SIGN, garment: TANK }, fps: 5, checkpoints: SIGN_CP },
+  'ghost-normal': { cfg: { video: SIGN, garment: 'ml:/test/ghost-shirt.svg' }, fps: 5, checkpoints: SIGN_CP },
+  'ghost-far': { cfg: { video: JUMP, garment: 'ml:/test/ghost-shirt.svg', zoom: 1.5, cy: 0.42 }, fps: 3, checkpoints: [1.5, 4.5, 7.5, 9.0] },
+  'ghost-debug': { cfg: { video: SIGN, garment: 'ml:/test/ghost-shirt.svg', settings: { debug: true } }, fps: 5, checkpoints: [2.1, 3.1] },
   'long-debug': { cfg: { video: SIGN, garment: LONG, settings: { debug: true } }, fps: 5, checkpoints: [0.9, 3.1] },
   'tank-close': { cfg: { video: SIGN, garment: TANK, zoom: 1.7, cy: 0.42 }, fps: 5, checkpoints: SIGN_CP },
 };

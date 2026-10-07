@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="480" viewBox="0 0 400 480">
+  <!-- Test fixture: product-style ("ghost mannequin") long-sleeve shirt with the
+       sleeves hanging down beside the body, on a plain studio background. -->
+  <rect width="400" height="480" fill="#f3f3f1" />
+  <!-- Sleeves (attached at the shoulders, hanging with a small gap to the body) -->
+  <path d="M132,78 L104,96 Q92,180 86,372 L118,378 Q122,250 128,152 Z" fill="#93b5a4" />
+  <path d="M268,78 L296,96 Q308,180 314,372 L282,378 Q278,250 272,152 Z" fill="#93b5a4" />
+  <path d="M86,358 L118,364 L118,378 L86,372 Z" fill="#83a594" />
+  <path d="M314,358 L282,364 L282,378 L314,372 Z" fill="#83a594" />
+  <!-- Body with a curved shirt-tail hem -->
+  <path d="M132,78 L176,64 Q200,84 224,64 L268,78 L272,152 L274,392 Q236,404 200,412 Q164,404 126,392 L128,152 Z" fill="#9dbfae" />
+  <!-- Collar band -->
+  <path d="M176,64 Q200,84 224,64 L220,56 Q200,70 180,56 Z" fill="#8cae9d" />
+  <!-- Placket + buttons -->
+  <line x1="200" y1="82" x2="200" y2="404" stroke="#88a998" stroke-width="3" />
+  <g fill="#2f3b35">
+    <circle cx="200" cy="112" r="3" /><circle cx="200" cy="162" r="3" /><circle cx="200" cy="212" r="3" />
+    <circle cx="200" cy="262" r="3" /><circle cx="200" cy="312" r="3" /><circle cx="200" cy="362" r="3" />
+  </g>
+  <!-- Chest pocket -->
+  <path d="M224,150 L254,150 L254,184 Q239,190 224,184 Z" fill="none" stroke="#83a594" stroke-width="2" />
+</svg>

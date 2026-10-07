@@ -142,6 +142,18 @@ describe('ArticulatedEngine (rig + TPS)', () => {
     expect(later.visible).toBe(true);
   });
 
+  it('follows a predicted wrist that is occluded (hand behind the head)', () => {
+    const e = new ArticulatedEngine();
+    e.prepare(LONG);
+    // Elbow raised out to the side; wrist hidden behind the head (low visibility,
+    // but in frame and at a plausible forearm length).
+    const f = run(e, (i) => frame({ [P.LEFT_ELBOW]: [250, 230], [P.LEFT_WRIST]: [410, 150, 0.2] }, i * 33));
+    const arm = f.debug!.arms[0]!;
+    expect(arm.state).toBe('partial');
+    const wrist = arm.chain[2]!;
+    expect(Math.abs(wrist.x - 410) + Math.abs(wrist.y - 150)).toBeLessThan(1);
+  });
+
   it('infers the elbow from a visible wrist when the elbow is out of frame (IK)', () => {
     const e = new ArticulatedEngine();
     e.prepare(LONG);

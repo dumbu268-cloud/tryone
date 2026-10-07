@@ -1,5 +1,5 @@
 import type { GarmentAsset, GarmentRig, SleeveRig, Vec2 } from '@/core/types';
-import { rigFromLayout } from './rig';
+import { rigFromLayout, sleeveCoverage } from './rig';
 import { capFraction, makeTube, polylineLength, type Tube } from '@/core/fit/tube';
 import * as v from '@/core/math/vec';
 
@@ -8,8 +8,8 @@ import * as v from '@/core/math/vec';
 //     its texture position and is warped by the torso TPS at fit time.
 //   - sleeves: grids in tube space (t along the source sleeve skeleton, s across);
 //     texture coords come from the source tube, screen positions from the
-//     user's arm tube. A region map (see regionPolygons) keeps sleeve texels out
-//     of the torso pass and vice versa.
+//     user's arm tube. The torso and sleeves sample separate texture layers
+//     (see layers.ts), so sleeve fabric never moves with the torso warp.
 
 export type MeshRegionId = 0 | 1 | 2;
 
@@ -25,6 +25,8 @@ export interface SleeveSource {
   cap: number;
   /** Half-width on the armhole line (shoulder tip → armpit), texture px. */
   armholeHalf: number;
+  /** Fraction of the user's arm (armhole → wrist) this sleeve covers. */
+  coverage: number;
 }
 
 export interface GarmentMesh {
@@ -47,9 +49,14 @@ export interface GarmentMesh {
 const TORSO_COLS = 16;
 const TORSO_ROWS = 20;
 const SLEEVE_LEN = 14;
-const SLEEVE_WID = 6;
-/** Sleeve meshes extend slightly past the measured half-width / cuff. */
-export const SLEEVE_S_EXTENT = 1.15;
+const SLEEVE_WID = 8;
+/**
+ * Sleeve meshes cover a generous band around the sleeve skeleton (in sleeve
+ * half-widths) and run slightly past the cuff. The sleeve LAYER texture is
+ * transparent outside real sleeve fabric, so the extra coverage is invisible.
+ */
+export const SLEEVE_S_EXTENT = 2.0;
+export const SLEEVE_T_EXTENT = 1.06;
 
 export function resolveRig(garment: GarmentAsset): GarmentRig {
   return garment.layout.rig ?? rigFromLayout(garment.layout);
@@ -71,28 +78,7 @@ export function sleeveSource(rig: GarmentRig, side: 'L' | 'R'): SleeveSource | n
     v.sub(pit, tip),
     cap,
   );
-  return { rig: s, tube, cap, armholeHalf };
-}
-
-/** Texture-space outline polygons of each sleeve (for the region map). */
-export function regionPolygons(mesh: GarmentMesh): { left: Vec2[] | null; right: Vec2[] | null } {
-  const poly = (src: SleeveSource | null): Vec2[] | null => {
-    if (!src) return null;
-    const top: Vec2[] = [];
-    const bot: Vec2[] = [];
-    for (let i = 0; i <= 24; i++) {
-      const t = i / 24;
-      top.push(src.tube.pointAt(t, -SLEEVE_S_EXTENT));
-      bot.push(src.tube.pointAt(t, SLEEVE_S_EXTENT));
-    }
-    // Close past the cuff a little to capture the cuff band.
-    const cuffDir = v.normalize(v.sub(src.tube.pointAt(1, 0), src.tube.pointAt(0.95, 0)));
-    const ext = v.scale(cuffDir, 0.06 * src.tube.length);
-    top.push(v.add(top[top.length - 1]!, ext));
-    bot.push(v.add(bot[bot.length - 1]!, ext));
-    return [...top, ...bot.reverse()];
-  };
-  return { left: poly(mesh.sleeveL), right: poly(mesh.sleeveR) };
+  return { rig: s, tube, cap, armholeHalf, coverage: sleeveCoverage(rig, s) };
 }
 
 export function buildGarmentMesh(garment: GarmentAsset): GarmentMesh {
@@ -148,7 +134,7 @@ export function buildGarmentMesh(garment: GarmentAsset): GarmentMesh {
   const sleeveGrid = (src: SleeveSource | null, reg: number): MeshRange => {
     if (!src) return { start: indices.length, count: 0 };
     return grid(SLEEVE_LEN, SLEEVE_WID, (c, r) => {
-      const t = c / SLEEVE_LEN;
+      const t = (c / SLEEVE_LEN) * SLEEVE_T_EXTENT;
       const s = (r / SLEEVE_WID) * 2 * SLEEVE_S_EXTENT - SLEEVE_S_EXTENT;
       push(src.tube.pointAt(t, s), reg, t, s);
     });

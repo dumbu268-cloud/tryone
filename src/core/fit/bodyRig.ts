@@ -12,7 +12,12 @@ import * as v from '@/core/math/vec';
 export interface LandmarkPx {
   x: number;
   y: number;
+  /** Reliability used for decisions (visibility × in-frame). */
   visibility: number;
+  /** 0..1, how far inside the image the point is (1 = well inside). */
+  inFrame?: number;
+  /** Raw model visibility (occlusion likelihood), before the in-frame factor. */
+  raw?: number;
 }
 
 export interface ArmChainIdx {

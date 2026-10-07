@@ -1,4 +1,4 @@
-import type { GarmentAsset, GarmentPrepDiagnostics } from '@/core/types';
+import type { GarmentAsset, GarmentPrepDiagnostics, GarmentRig } from '@/core/types';
 import type { GarmentAnalysis } from './analyze';
 
 export const MAX_DIM = 512;
@@ -101,5 +101,29 @@ export function diagnosticsFromAnalysis(
     bbox: analysis.bbox,
     foregroundRatio: Number(analysis.foregroundRatio.toFixed(3)),
     ...extra,
+  };
+}
+
+/**
+ * Attach a rig to an analysis and take the sleeve classification from the rig
+ * (sleeve length along the sleeve), which is correct for flat-lay, hanging and
+ * worn sleeves alike.
+ */
+export function withRig(
+  analysis: GarmentAnalysis,
+  rig: GarmentRig,
+  sleeveLength: 'none' | 'short' | 'long',
+): GarmentAnalysis {
+  if (!analysis.supported) return { ...analysis, layout: { ...analysis.layout, rig } };
+  const long = sleeveLength === 'long';
+  const { reason: _drop, ...rest } = analysis;
+  void _drop;
+  return {
+    ...rest,
+    ...(sleeveLength === 'none' ? { reason: 'No sleeves detected (sleeveless/tank); torso only.' } : {}),
+    type: long ? 'longsleeve' : 'tshirt',
+    sleeveLength,
+    coversForearm: long,
+    layout: { ...analysis.layout, sleeveLength: long ? 'long' : 'short', coversForearm: long, rig },
   };
 }

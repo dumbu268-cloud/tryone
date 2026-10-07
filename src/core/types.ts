@@ -134,6 +134,12 @@ export interface SleeveRig {
   axis: Vec2[];
   rootHalfWidth: number;
   tipHalfWidth: number;
+  /**
+   * Fraction of the arm (armhole → wrist) the sleeve covers: ~0.3 for a tee,
+   * 1 = ends at the wrist. Measured on the model's arm for worn photos; derived
+   * from the sleeve length vs shoulder width otherwise (see sleeveCoverage).
+   */
+  coverage?: number;
 }
 
 /**

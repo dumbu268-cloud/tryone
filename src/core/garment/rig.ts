@@ -1,6 +1,7 @@
 import type { GarmentLayout, GarmentRig, SleeveRig, Vec2 } from '@/core/types';
 import { estimateBodyKeypoints, type LandmarkPx } from '@/core/fit/bodyRig';
 import { fitPolylineLength, polylineLength } from '@/core/fit/tube';
+import { rowRuns, runAt } from '@/core/garment/prep/maskOps';
 import * as v from '@/core/math/vec';
 
 // Garment rig extraction: named keypoints + sleeve skeletons in texture space.
@@ -90,16 +91,22 @@ export function rigFromSilhouette(mask: Uint8Array, w: number, h: number, layout
   const shoulderL = { x: xL, y: topRow(xL) };
   const shoulderR = { x: xR, y: topRow(xR) };
 
-  // Armpit per side: first row below the shoulder where nothing extends past the torso side.
+  // Armpit per side: the first row below the shoulder where the body's central
+  // run ends at the torso side, i.e. the sleeve has separated from the body.
+  // Works for flat-lay sleeves (sticking out) and hanging sleeves (with a gap).
   const armpit = (side: -1 | 1, xs: number, y0: number): Vec2 => {
-    const probe = xs + side * Math.max(3, 0.03 * width);
+    const tol = Math.max(2, 0.03 * width);
+    const out = Math.max(4, 0.06 * width); // the sleeve must clearly stick out first
+    const yMax = Math.min(hemY - 1, Math.round(y0 + 1.1 * width));
     let seen = false;
-    for (let y = y0; y < hemY; y++) {
-      const inSleeve = at(mask, w, h, { x: probe, y });
-      if (inSleeve) seen = true;
-      else if (seen) return { x: xs, y };
+    for (let y = Math.round(y0) + 1; y <= yMax; y++) {
+      const run = runAt(rowRuns(mask, w, y), cx);
+      if (!run) continue;
+      const beyond = side < 0 ? xs - run.s : run.e - xs; // how far the body run extends past the side
+      if (beyond > out) seen = true;
+      else if (seen && beyond <= tol) return { x: xs, y };
     }
-    return { x: xs, y: Math.round(y0 + (hemY - y0) * 0.3) };
+    return { x: xs, y: Math.round(y0 + Math.min(0.45 * width, (hemY - y0) * 0.3)) };
   };
   const armpitL = armpit(-1, xL, shoulderL.y);
   const armpitR = armpit(1, xR, shoulderR.y);
@@ -147,9 +154,24 @@ export function rigFromSilhouette(mask: Uint8Array, w: number, h: number, layout
     }
     if (n === 0) return null;
     const cuff = { x: sx / n, y: sy / n };
+    const len = v.dist(root, cuff);
+    // Measured fabric half-width across the sleeve (outward of the torso side only).
+    const sdir = v.normalize(v.sub(cuff, root));
+    const sn = { x: -sdir.y, y: sdir.x };
+    const outward = (p: Vec2) => (side < 0 ? p.x < tip.x - 1 : p.x > tip.x + 1);
+    const widthAt = (f: number): number => {
+      const c = v.add(root, v.scale(sdir, f * len));
+      const lim = 0.6 * width;
+      let a = 0;
+      let b = 0;
+      while (a < lim && at(mask, w, h, v.add(c, v.scale(sn, a + 1))) && outward(v.add(c, v.scale(sn, a + 1)))) a++;
+      while (b < lim && at(mask, w, h, v.sub(c, v.scale(sn, b + 1))) && outward(v.sub(c, v.scale(sn, b + 1)))) b++;
+      return (a + b) / 2;
+    };
+    const midHalf = widthAt(0.4);
     return {
       axis: [root, cuff],
-      rootHalfWidth: v.dist(tip, pit) / 2,
+      rootHalfWidth: midHalf >= 2 ? Math.min(midHalf, v.dist(tip, pit) / 2) : v.dist(tip, pit) / 2,
       tipHalfWidth: Math.max(2, (maxP - minP) / 2),
     };
   };
@@ -170,6 +192,32 @@ export function rigFromSilhouette(mask: Uint8Array, w: number, h: number, layout
     sleeveR: hasSleeves ? sleeveFrom(1, shoulderR, armpitR) : null,
     source: 'silhouette',
   };
+}
+
+/** Typical shoulder-seam → wrist length relative to shoulder width. */
+const ARM_PER_SHOULDER = 1.42;
+
+/** Fraction of the arm a sleeve covers (see SleeveRig.coverage). */
+export function sleeveCoverage(rig: GarmentRig, s: SleeveRig): number {
+  if (s.coverage !== undefined) return v.clamp(s.coverage, 0.1, 1.05);
+  const sw = Math.max(1, v.dist(rig.shoulderL, rig.shoulderR));
+  const ratio = polylineLength(s.axis) / sw;
+  const raw = ratio / ARM_PER_SHOULDER;
+  // A long sleeve ends at the wrist whatever its flat-lay proportions.
+  return ratio > 0.9 ? v.clamp(raw, 1.0, 1.05) : v.clamp(raw, 0.12, 0.7);
+}
+
+/**
+ * Sleeve length class from a rig: a sleeve's own length relative to the shoulder
+ * width (shoulder seam → cuff). Robust to sleeve DIRECTION, unlike measuring how
+ * far a sleeve sticks out sideways (which reads hanging long sleeves as short).
+ */
+export function sleeveClassFromRig(rig: GarmentRig): SleeveClass {
+  const sw = Math.max(1, v.dist(rig.shoulderL, rig.shoulderR));
+  const len = (s: SleeveRig | null) => (s ? polylineLength(s.axis) : 0);
+  const ratio = Math.max(len(rig.sleeveL), len(rig.sleeveR)) / sw;
+  if (!rig.sleeveL && !rig.sleeveR) return 'none';
+  return ratio > 0.9 ? 'long' : 'short';
 }
 
 // --- worn garment (source pose) --------------------------------------------
@@ -268,11 +316,13 @@ export function rigFromPose(
       while (b < lim && at(mask, w, h, v.sub(p, v.scale(n, b + 1)))) b++;
       return Math.max(2, (a + b) / 2);
     };
+    const armLen = upperLen + (arm.length > 2 ? v.dist(elbow, arm[2]!) : upperLen * (0.75 / 0.85));
     return {
       rig: {
         axis,
         rootHalfWidth: Math.max(halfAt(rootArc + 0.3 * length), 0.12 * span),
         tipHalfWidth: halfAt(Math.max(0, end - 2 * step)),
+        coverage: v.clamp(end / armLen, 0.1, 1.05),
       },
       ratio,
     };

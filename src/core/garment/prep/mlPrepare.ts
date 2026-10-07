@@ -1,6 +1,6 @@
 import type { GarmentPrepResult, GarmentPreparer } from '@/core/types';
 import { analyzeGarment, type GarmentAnalysis } from './analyze';
-import { rigFromPose, rigFromSilhouette } from '@/core/garment/rig';
+import { rigFromPose, rigFromSilhouette, sleeveClassFromRig } from '@/core/garment/rig';
 import { ClassicGarmentPreparer } from './prepare';
 import { ClothingSegmenter, type ClothingSegmenterOptions } from './ClothingSegmenter';
 import {
@@ -19,6 +19,7 @@ import {
   diagnosticsFromAnalysis,
   rasterize,
   targetSize,
+  withRig,
 } from './shared';
 import { PoseLandmark, SegClass } from '@/core/perception/landmarks';
 
@@ -126,21 +127,7 @@ function attachRig(
   pose: { x: number; y: number; visibility: number }[] | null,
 ): GarmentAnalysis {
   const fromPose = analysis.supported && pose ? rigFromPose(mask, w, h, pose) : null;
-  if (!fromPose) {
-    return { ...analysis, layout: { ...analysis.layout, rig: rigFromSilhouette(mask, w, h, analysis.layout) } };
-  }
-  const long = fromPose.sleeveLength === 'long';
-  return {
-    ...analysis,
-    type: long ? 'longsleeve' : 'tshirt',
-    sleeveLength: fromPose.sleeveLength,
-    coversForearm: long,
-    ...(fromPose.sleeveLength === 'none' ? { reason: 'No sleeves detected (sleeveless/tank).' } : {}),
-    layout: {
-      ...analysis.layout,
-      sleeveLength: long ? 'long' : 'short',
-      coversForearm: long,
-      rig: fromPose.rig,
-    },
-  };
+  if (fromPose) return withRig(analysis, fromPose.rig, fromPose.sleeveLength);
+  const rig = rigFromSilhouette(mask, w, h, analysis.layout);
+  return withRig(analysis, rig, sleeveClassFromRig(rig));
 }

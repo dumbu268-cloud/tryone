@@ -1,6 +1,7 @@
 import type { ArmTrackState, FitResult, GarmentAsset, PoseFrame, Vec2 } from '@/core/types';
 import { PoseLandmark } from '@/core/perception/landmarks';
-import { buildGarmentMesh, regionPolygons, type GarmentMesh } from '@/core/garment/mesh';
+import { buildGarmentMesh, type GarmentMesh } from '@/core/garment/mesh';
+import { buildGarmentLayers } from '@/core/garment/layers';
 import * as v from '@/core/math/vec';
 import {
   bindAttrib,
@@ -79,8 +80,10 @@ export class Renderer {
 
   private readonly videoTex: WebGLTexture;
   private readonly segTex: WebGLTexture;
+  /** Torso layer (body fabric, completed under the sleeves). */
   private garmentTex: WebGLTexture | null = null;
-  private regionTex: WebGLTexture | null = null;
+  /** Sleeve layer (sleeve fabric only). */
+  private sleeveTex: WebGLTexture | null = null;
 
   private mesh: GarmentMesh | null = null;
   private meshPos: WebGLBuffer | null = null;
@@ -141,11 +144,13 @@ export class Renderer {
   setGarment(garment: GarmentAsset): void {
     const gl = this.gl;
     this.garment = garment;
-    if (!this.garmentTex) this.garmentTex = createTexture(gl, gl.LINEAR);
-    uploadRGBA(gl, this.garmentTex, garment.image, true, true);
-
     const mesh = buildGarmentMesh(garment);
     this.mesh = mesh;
+    const layers = buildGarmentLayers(garment, mesh);
+    if (!this.garmentTex) this.garmentTex = createTexture(gl, gl.LINEAR);
+    uploadRGBA(gl, this.garmentTex, layers.torso, true, true);
+    if (!this.sleeveTex) this.sleeveTex = createTexture(gl, gl.LINEAR);
+    uploadRGBA(gl, this.sleeveTex, layers.sleeves, true, true);
     this.meshUV = createBuffer(gl, mesh.uv);
     this.meshAlpha = createBuffer(gl, mesh.alpha);
     this.meshPos = createBuffer(gl, new Float32Array(mesh.vertexCount * 2), gl.DYNAMIC_DRAW);
@@ -154,8 +159,6 @@ export class Renderer {
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
     this.meshIndex = idx;
 
-    if (!this.regionTex) this.regionTex = createTexture(gl, gl.NEAREST);
-    uploadRGBA(gl, this.regionTex, buildRegionCanvas(mesh, garment.textureWidth, garment.textureHeight));
   }
 
   render(input: RenderInput): void {
@@ -238,7 +241,6 @@ export class Renderer {
       ['uGarment', this.garmentTex],
       ['uSeg', this.segTex],
       ['uVideo', this.videoTex],
-      ['uRegion', this.regionTex],
     ];
     units.forEach(([name, tex], i) => {
       gl.activeTexture(gl.TEXTURE0 + i);
@@ -247,7 +249,6 @@ export class Renderer {
     });
 
     const opLoc = gl.getUniformLocation(p, 'uOpacity');
-    const partLoc = gl.getUniformLocation(p, 'uPart');
     const parts = [
       { part: 0, range: mesh.ranges.torso, z: 0, op: fit.opacity },
       { part: 1, range: mesh.ranges.leftSleeve, z: fit.leftSleeveBehind ? -1 : 1, op: fit.opacity * (fit.leftSleeveOpacity ?? 1) },
@@ -256,7 +257,8 @@ export class Renderer {
     for (const part of parts) {
       if (part.op <= 0.01 || part.range.count === 0) continue;
       gl.uniform1f(opLoc, part.op);
-      gl.uniform1i(partLoc, part.part);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, part.part === 0 ? this.garmentTex : this.sleeveTex);
       gl.drawElements(gl.TRIANGLES, part.range.count, gl.UNSIGNED_SHORT, part.range.start * 2);
     }
   }
@@ -341,32 +343,8 @@ export class Renderer {
     gl.deleteTexture(this.videoTex);
     gl.deleteTexture(this.segTex);
     if (this.garmentTex) gl.deleteTexture(this.garmentTex);
-    if (this.regionTex) gl.deleteTexture(this.regionTex);
+    if (this.sleeveTex) gl.deleteTexture(this.sleeveTex);
   }
-}
-
-/** Region map in texture space: R = image-left sleeve, G = image-right sleeve, else torso. */
-export function buildRegionCanvas(mesh: GarmentMesh, w: number, h: number): HTMLCanvasElement {
-  const c = document.createElement('canvas');
-  c.width = Math.max(1, Math.round(w));
-  c.height = Math.max(1, Math.round(h));
-  const ctx = c.getContext('2d')!;
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, c.width, c.height);
-  ctx.globalCompositeOperation = 'lighter';
-  const polys = regionPolygons(mesh);
-  const fill = (poly: Vec2[] | null, color: string) => {
-    if (!poly || poly.length < 3) return;
-    ctx.beginPath();
-    ctx.moveTo(poly[0]!.x, poly[0]!.y);
-    for (const q of poly.slice(1)) ctx.lineTo(q.x, q.y);
-    ctx.closePath();
-    ctx.fillStyle = color;
-    ctx.fill();
-  };
-  fill(polys.left, '#ff0000');
-  fill(polys.right, '#00ff00');
-  return c;
 }
 
 function forearmFront(

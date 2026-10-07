@@ -6,7 +6,8 @@
 // Driven by ?replay=1 (see main.tsx) and e2e/replay.spec.ts.
 import { BodyPerception } from '@/core/perception/BodyPerception';
 import { ArticulatedEngine } from '@/core/engine/ArticulatedEngine';
-import { Renderer, DEFAULT_RENDER_SETTINGS, buildRegionCanvas, needsSegmentation, type RenderSettings } from '@/core/render/Renderer';
+import { Renderer, DEFAULT_RENDER_SETTINGS, needsSegmentation, type RenderSettings } from '@/core/render/Renderer';
+import { buildGarmentLayers } from '@/core/garment/layers';
 import { buildGarmentMesh } from '@/core/garment/mesh';
 import { loadGarment } from '@/core/garment/loader';
 import { CATALOG } from '@/core/garment/catalog';
@@ -79,11 +80,25 @@ class Replay {
     this.renderer.setGarment(garment);
     this.renderer.resize(W, H);
     const mesh = buildGarmentMesh(garment);
-    const rc = buildRegionCanvas(mesh, garment.textureWidth, garment.textureHeight);
+    // Layer preview: [original | torso layer | sleeve layer] over a checkerboard.
+    const layers = buildGarmentLayers(garment, mesh);
+    const lw = layers.torso.width;
+    const lh = layers.torso.height;
+    const rc = document.createElement('canvas');
+    rc.width = lw * 3;
+    rc.height = lh;
     const ctx = rc.getContext('2d')!;
-    ctx.globalCompositeOperation = 'destination-over';
-    ctx.drawImage(garment.image as CanvasImageSource, 0, 0, rc.width, rc.height);
+    for (let y = 0; y < lh; y += 12) {
+      for (let x = 0; x < rc.width; x += 12) {
+        ctx.fillStyle = ((x / 12 + y / 12) & 1) === 0 ? '#cc44cc' : '#ffffff';
+        ctx.fillRect(x, y, 12, 12);
+      }
+    }
+    ctx.drawImage(garment.image as CanvasImageSource, 0, 0, lw, lh);
+    ctx.drawImage(layers.torso, lw, 0);
+    ctx.drawImage(layers.sleeves, 2 * lw, 0);
     this.regionUrl = rc.toDataURL();
+    (this.garmentInfo as Record<string, unknown>).filled = layers.pixels.filled;
     (this.garmentInfo as Record<string, unknown>).rig = mesh.rig;
   }
 

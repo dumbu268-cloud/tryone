@@ -26,6 +26,7 @@ public/test/*
 !public/test/.gitkeep
 !public/test/product.html
 !public/test/noimage.html
+!public/test/ghost-shirt.svg
 
 # Playwright
 test-results

@@ -184,3 +184,53 @@ export function featherMask(mask: Uint8Array, w: number, h: number, radius = 1):
   }
   return out;
 }
+
+/** A horizontal run of set pixels in one mask row (inclusive bounds). */
+export interface Run {
+  s: number;
+  e: number;
+}
+
+/** All runs of set pixels in row `y`. */
+export function rowRuns(mask: Uint8Array, w: number, y: number): Run[] {
+  const runs: Run[] = [];
+  const base = y * w;
+  let s = -1;
+  for (let x = 0; x < w; x++) {
+    const on = mask[base + x]! > 0;
+    if (on && s < 0) s = x;
+    else if (!on && s >= 0) {
+      runs.push({ s, e: x - 1 });
+      s = -1;
+    }
+  }
+  if (s >= 0) runs.push({ s, e: w - 1 });
+  return runs;
+}
+
+/** The run containing column x, else the nearest run; null for an empty row. */
+export function runAt(runs: readonly Run[], x: number): Run | null {
+  let best: Run | null = null;
+  let bestD = Infinity;
+  for (const r of runs) {
+    const d = x < r.s ? r.s - x : x > r.e ? x - r.e : 0;
+    if (d < bestD) {
+      bestD = d;
+      best = r;
+    }
+  }
+  return best;
+}
+
+/** The run containing pixel (x, y), or null if that pixel is not set. */
+export function runContaining(mask: Uint8Array, w: number, h: number, x: number, y: number): Run | null {
+  const xi = Math.round(x);
+  const yi = Math.round(y);
+  if (xi < 0 || yi < 0 || xi >= w || yi >= h || !mask[yi * w + xi]) return null;
+  const base = yi * w;
+  let s = xi;
+  let e = xi;
+  while (s > 0 && mask[base + s - 1]) s--;
+  while (e < w - 1 && mask[base + e + 1]) e++;
+  return { s, e };
+}

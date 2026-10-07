@@ -183,7 +183,8 @@ export class ArticulatedEngine implements TryOnEngine {
     for (let i = 0; i < 33; i++) {
       const n = frame.normalized[i]!;
       const p = frame.image[i]!;
-      out[i] = { x: p.x, y: p.y, visibility: (n.visibility ?? 0) * inFrame(n.x, n.y) };
+      const f = inFrame(n.x, n.y);
+      out[i] = { x: p.x, y: p.y, visibility: (n.visibility ?? 0) * f, inFrame: f, raw: n.visibility ?? 0 };
     }
     const hip = Math.min(out[PoseLandmark.LEFT_HIP]!.visibility, out[PoseLandmark.RIGHT_HIP]!.visibility);
     this.hipRel += (smooth01(0.45, 0.75, hip) - this.hipRel) * 0.3;
@@ -245,10 +246,30 @@ export class ArticulatedEngine implements TryOnEngine {
     const restForearm: Vec2 = v.normalize({ x: side * 0.08, y: 1 });
     const decay = (t0: number) => 1 - Math.exp(-Math.max(0, now - t0) / this.opts.armDecayMs);
 
-    // Elbow: tracked, else inferred from a visible wrist (two-bone IK), else held/rest.
+    // MediaPipe also PREDICTS occluded joints (e.g. a hand behind the head): low
+    // visibility means "covered", not "unknown". Use the prediction when it is in
+    // frame and anatomically plausible instead of a canned fallback pose.
+    const predicted = (i: number, from: Vec2, expect: number): Vec2 | null => {
+      const p = lm[i]!;
+      if ((p.inFrame ?? 1) < 0.5 || (p.raw ?? p.visibility) < 0.08) return null;
+      const rel = toRel(p);
+      const len = v.dist(rel, from);
+      return len >= 0.3 * expect && len <= 1.45 * expect ? rel : null;
+    };
+    let elbowPred = false;
+    let wristPred = false;
+
+    // Elbow: tracked, else predicted (occluded), else inferred from a visible
+    // wrist (two-bone IK), else held → rest.
     let elbowRel: Vec2;
+    const pe = arm.elbow.on ? null : predicted(chain.elbow, { x: 0, y: 0 }, BODY.upperArm);
     if (arm.elbow.on) {
       elbowRel = toRel(lm[chain.elbow]!);
+      arm.elbow.lastGood = elbowRel;
+      arm.elbow.lastGoodT = now;
+    } else if (pe && (!arm.wrist.on || predictedFits(toRel(lm[chain.wrist]!), pe, BODY.forearm))) {
+      elbowRel = pe;
+      elbowPred = true;
       arm.elbow.lastGood = elbowRel;
       arm.elbow.lastGoodT = now;
     } else if (arm.wrist.on) {
@@ -265,8 +286,10 @@ export class ArticulatedEngine implements TryOnEngine {
     const naturalForearm = v.normalize(v.lerp(upperDir, restForearm, 0.5));
     let forearmDir: Vec2;
     let wristRel: Vec2;
-    if (arm.wrist.on) {
-      wristRel = toRel(lm[chain.wrist]!);
+    const pw = arm.wrist.on ? null : predicted(chain.wrist, elbowRel, BODY.forearm);
+    if (arm.wrist.on || pw) {
+      wristRel = pw ?? toRel(lm[chain.wrist]!);
+      wristPred = !!pw;
       const d = v.sub(wristRel, elbowRel);
       forearmDir = v.len(d) > 1e-3 ? v.normalize(d) : naturalForearm;
       arm.forearmDir = forearmDir;
@@ -280,7 +303,7 @@ export class ArticulatedEngine implements TryOnEngine {
     const state: ArmTrackState =
       arm.elbow.on && arm.wrist.on
         ? 'tracked'
-        : arm.elbow.on || arm.wrist.on
+        : arm.elbow.on || arm.wrist.on || elbowPred || wristPred
           ? 'partial'
           : arm.elbow.lastGood && now - arm.elbow.lastGoodT < 2.5 * this.opts.armDecayMs
             ? 'held'
@@ -302,9 +325,14 @@ export class ArticulatedEngine implements TryOnEngine {
     const root = v.mid(tip, pit);
     const widthK = flat ? FLAT_TO_WORN : 1;
     const span = body.span;
-    const length = Math.max(4, src.tube.length * scale);
+    // Sleeve length is a fraction of the user's OWN arm (armhole → elbow → wrist),
+    // so a long sleeve ends at the wrist for any arm length or camera angle
+    // (forearms pointing at the camera look short on screen).
+    const upper = v.dist(root, chain[1]!);
+    const armLen = upper + v.dist(chain[1]!, chain[2]!);
+    const length = Math.max(4, src.coverage * armLen);
     const axis = fitPolylineLength([root, chain[1]!, chain[2]!], length);
-    const reachesForearm = length > BODY.upperArm * span * 1.05;
+    const reachesForearm = length > upper * 1.05;
     return makeTube(
       axis,
       {
@@ -347,6 +375,12 @@ function ikElbow(wrist: Vec2, upper: number, fore: number, side: -1 | 1): Vec2 {
   const e2 = rot(-a);
   if (Math.abs(e1.y - e2.y) > 1e-3) return e1.y > e2.y ? e1 : e2;
   return e1.x * side > e2.x * side ? e1 : e2;
+}
+
+/** Is the predicted segment from `a` to `b` of plausible length (body-relative units)? */
+function predictedFits(a: Vec2, b: Vec2, expect: number): boolean {
+  const len = v.dist(a, b);
+  return len >= 0.3 * expect && len <= 1.45 * expect;
 }
 
 function inFrame(x: number, y: number): number {
