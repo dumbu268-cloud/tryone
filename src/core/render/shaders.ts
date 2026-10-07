@@ -106,13 +106,13 @@ void main() {
   outColor = vec4(rgb * a, a); // premultiplied
 }`;
 
-// Re-paints the real forearms (camera skin pixels) over the garment where a
-// forearm crosses in front of the torso.
+// Re-paints the real forearm camera pixels over a short-sleeve/tank garment
+// when an arm crosses the torso. Pose capsules replace the coarse live person
+// segmentation mask, so this occlusion stays available with pose-only inference.
 export const FOREARM_FS = /* glsl */ `#version 300 es
 precision highp float;
 in vec2 vScreenUV;
 uniform sampler2D uVideo;
-uniform sampler2D uSeg;
 uniform vec2 uRes;
 uniform vec2 uElbowL;
 uniform vec2 uWristL;
@@ -139,12 +139,6 @@ void main() {
   if (m <= 0.003) discard;
 
   vec2 suv = vec2(fragPx.x / uRes.x, fragPx.y / uRes.y);
-  vec2 segUV = vec2(1.0 - suv.x, 1.0 - suv.y);
-  float c = floor(texture(uSeg, segUV).r * 255.0 + 0.5);
-  float skin = abs(c - 2.0) < 0.5 ? 1.0 : 0.0; // body-skin
-  m *= skin;
-  if (m <= 0.003) discard;
-
   vec2 vuv = vec2(1.0 - suv.x, 1.0 - suv.y);
   outColor = vec4(texture(uVideo, vuv).rgb, m);
 }`;

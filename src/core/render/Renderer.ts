@@ -40,8 +40,10 @@ export const DEFAULT_RENDER_SETTINGS: RenderSettings = {
 };
 
 /** Does this garment + settings combination need live segmentation at all? */
-export function needsSegmentation(settings: RenderSettings, coversForearm: boolean): boolean {
-  return settings.occludeSilhouette || settings.occludeHairFace || (settings.occludeForearms && !coversForearm);
+export function needsSegmentation(_settings: RenderSettings, _coversForearm: boolean): boolean {
+  // Live fitting is pose-only. The previous 256px mask caused holes/lag and
+  // roughly doubled inference. ML segmentation remains in one-shot garment prep.
+  return false;
 }
 
 export interface RenderInput {
@@ -181,7 +183,7 @@ export class Renderer {
     }
 
     const coversForearm = this.garment?.layout.coversForearm ?? false;
-    if (settings.occludeForearms && !coversForearm && hasSeg && frame.valid) {
+    if (settings.occludeForearms && !coversForearm && frame.valid) {
       gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       this.drawForearms(input);
     }
@@ -296,9 +298,6 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.videoTex);
     gl.uniform1i(gl.getUniformLocation(p, 'uVideo'), 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.segTex);
-    gl.uniform1i(gl.getUniformLocation(p, 'uSeg'), 1);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 

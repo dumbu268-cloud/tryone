@@ -26,6 +26,7 @@ test('app boots, camera starts, and the live loop runs', async ({ page }) => {
 
   // Stats overlay appears and FPS climbs above zero as frames are processed.
   await expect(page.getByTestId('stats')).toBeVisible();
+  await expect(page.getByTestId('stats')).toContainText('worker');
   await expect
     .poll(
       async () => {
